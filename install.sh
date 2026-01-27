@@ -19,6 +19,7 @@ WG_CONFIG="$CONFIG_DIR/wg0.conf"
 WG_NETWORK=""
 WG_PORT=""
 WG_SERVER_IP=""
+EXTERNAL_IF=""
 
 # Счетчик шагов
 STEP=0
@@ -113,6 +114,26 @@ validate_port() {
     return 1
 }
 
+# Валидация интерфейса
+validate_interface() {
+    local iface="$1"
+    # Проверяем что интерфейс существует
+    if ip link show "$iface" &>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Получение интерфейса по умолчанию
+get_default_interface() {
+    local default_if=$(ip route | grep default | awk '{print $5}' | head -1)
+    if [ -n "$default_if" ]; then
+        echo "$default_if"
+    else
+        echo "eth0"
+    fi
+}
+
 # Вычисление первого IP адреса в сети для сервера
 calculate_server_ip() {
     local network="$1"
@@ -172,11 +193,24 @@ get_config_params() {
         exit 1
     fi
     
+    # Определение интерфейса по умолчанию
+    local default_if=$(get_default_interface)
+    
+    # Запрос интерфейса для выхода в интернет
+    EXTERNAL_IF=$(prompt_input "Введите интерфейс для выхода в интернет" "$default_if" "validate_interface")
+    
+    # Проверка что переменная установлена правильно
+    if [[ -z "$EXTERNAL_IF" ]] || [[ "$EXTERNAL_IF" =~ \[.*\] ]]; then
+        log_error "Ошибка: не удалось получить интерфейс"
+        exit 1
+    fi
+    
     echo ""
     log_success "Параметры конфигурации:"
     log_info "  Сеть: $WG_NETWORK"
     log_info "  IP сервера: $WG_SERVER_IP"
     log_info "  Порт: $WG_PORT"
+    log_info "  Внешний интерфейс: $EXTERNAL_IF"
     echo ""
 }
 
@@ -365,8 +399,7 @@ generate_config() {
     PSK=$(wg genpsk)
     
     # Получение внешнего IP
-    log_info "Получение внешнего IP адреса..."
-    EXTERNAL_IF=$(ip route | grep default | awk '{print $5}' | head -1)
+    log_info "Получение внешнего IP адреса для интерфейса $EXTERNAL_IF..."
     if [ -n "$EXTERNAL_IF" ]; then
         EXTERNAL_IP=$(ip addr show "$EXTERNAL_IF" | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1 | head -1)
         if [ -z "$EXTERNAL_IP" ]; then
@@ -452,7 +485,11 @@ services:
       - ./awg-config:/opt/amnezia/awg
 
     command: >
-      sh -c "wg-quick up /opt/amnezia/awg/wg0.conf && tail -f /dev/null"
+      sh -c "EXTERNAL_IF=$EXTERNAL_IF &&
+      iptables -C DOCKER-USER -i wg0 -o \$$EXTERNAL_IF -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i wg0 -o \$$EXTERNAL_IF -j ACCEPT &&
+      iptables -C DOCKER-USER -i \$$EXTERNAL_IF -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i \$$EXTERNAL_IF -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT &&
+      iptables -t nat -C POSTROUTING -s $WG_NETWORK -o \$$EXTERNAL_IF -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s $WG_NETWORK -o \$$EXTERNAL_IF -j MASQUERADE &&
+      wg-quick up /opt/amnezia/awg/wg0.conf && tail -f /dev/null"
 
     restart: always
 EOF
@@ -560,6 +597,7 @@ print_summary() {
     echo "  Сеть: $WG_NETWORK"
     echo "  IP сервера: $WG_SERVER_IP"
     echo "  Порт: $WG_PORT"
+    echo "  Внешний интерфейс: $EXTERNAL_IF"
     echo ""
     
     # Вывод публичного ключа сервера
