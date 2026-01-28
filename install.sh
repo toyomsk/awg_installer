@@ -644,10 +644,52 @@ EOF
     log_info "Внешний IP сервера: $EXTERNAL_IP"
 }
 
+# Создание скрипта запуска контейнера
+create_startup_script() {
+    log_step "Создание скрипта запуска контейнера"
+    
+    local startup_script="$INSTALL_DIR/start-container.sh"
+    
+    cat > "$startup_script" << 'SCRIPT_EOF'
+#!/bin/bash
+
+echo "Container startup"
+
+# kill daemons in case of restart
+wg-quick down /opt/amnezia/awg/wg0.conf 2>/dev/null || true
+
+# start daemons if configured
+if [ -f /opt/amnezia/awg/wg0.conf ]; then 
+    wg-quick up /opt/amnezia/awg/wg0.conf
+fi
+
+# Allow traffic on the TUN interface.
+iptables -A INPUT -i wg0 -j ACCEPT
+iptables -A FORWARD -i wg0 -j ACCEPT
+iptables -A OUTPUT -o wg0 -j ACCEPT
+
+# Allow forwarding traffic only from the VPN.
+iptables -A FORWARD -i wg0 -o EXTERNAL_IF_PLACEHOLDER -s WG_NETWORK_PLACEHOLDER -j ACCEPT
+
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+iptables -t nat -A POSTROUTING -s WG_NETWORK_PLACEHOLDER -o EXTERNAL_IF_PLACEHOLDER -j MASQUERADE
+
+tail -f /dev/null
+SCRIPT_EOF
+    
+    # Заменяем плейсхолдеры на реальные значения
+    sed -i "s/EXTERNAL_IF_PLACEHOLDER/$EXTERNAL_IF/g" "$startup_script"
+    sed -i "s/WG_NETWORK_PLACEHOLDER/$WG_NETWORK/g" "$startup_script"
+    
+    chmod +x "$startup_script"
+    log_success "Скрипт запуска создан: $startup_script"
+}
+
 # Создание docker-compose.yml
 create_docker_compose() {
     log_step "Создание docker-compose.yml"
-
+    
     cat > "$COMPOSE_FILE" << EOF
 services:
   amnezia-awg:
@@ -664,13 +706,13 @@ services:
     volumes:
       - /lib/modules:/lib/modules:ro
       - ./awg-config:/opt/amnezia/awg
+      - ./start-container.sh:/start-container.sh:ro
 
-    command: >
-      sh -c "wg-quick up /opt/amnezia/awg/wg0.conf && tail -f /dev/null"
+    command: /start-container.sh
 
     restart: always
 EOF
-
+    
     log_success "docker-compose.yml создан"
 }
 
@@ -819,6 +861,7 @@ main() {
     install_docker
     create_directories
     generate_config
+    create_startup_script
     create_docker_compose
     start_container
 
