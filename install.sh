@@ -592,15 +592,33 @@ generate_config() {
         EXTERNAL_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || echo "НЕ_ОПРЕДЕЛЕН")
     fi
 
-    # Генерация параметров obfuscation
+    # Генерация параметров obfuscation согласно документации AmneziaWG
     log_info "Генерация параметров obfuscation..."
-    OBFS_Jc=$((RANDOM % 200 + 50))  # 50-250
-    OBFS_Jmin=$((RANDOM % 300 + 300))  # 300-600
-    OBFS_Jmax=$((RANDOM % 300 + 400))  # 400-700
-    OBFS_S1=$((RANDOM % 50 + 10))  # 10-60
-    OBFS_S2=$((RANDOM % 50 + 10))  # 10-60
-    # H1-H4: случайные числа в диапазоне 0-2147483647 (32-bit)
-    # Используем /dev/urandom для генерации больших случайных чисел
+    # Jc: количество junk пакетов (0-128, рекомендуется 3-10)
+    OBFS_Jc=$((RANDOM % 8 + 3))  # 3-10
+    
+    # Jmin/Jmax: размер junk пакетов в байтах (0-1280, рекомендуется 50-1000 или 10-50)
+    # Используем рекомендуемый диапазон 50-1000
+    OBFS_Jmin=$((RANDOM % 950 + 50))  # 50-1000
+    OBFS_Jmax=$((RANDOM % 950 + 50))  # 50-1000
+    # Убеждаемся что Jmax >= Jmin
+    if [ $OBFS_Jmax -lt $OBFS_Jmin ]; then
+        local temp=$OBFS_Jmin
+        OBFS_Jmin=$OBFS_Jmax
+        OBFS_Jmax=$temp
+    fi
+    
+    # S1, S2: случайные префиксы для handshake (0-64 байта, рекомендуется 15-150 с ограничением S1 + 56 ≠ S2)
+    # Используем диапазон 15-64 (в пределах документации)
+    OBFS_S1=$((RANDOM % 50 + 15))  # 15-64
+    OBFS_S2=$((RANDOM % 50 + 15))  # 15-64
+    # Убеждаемся что S1 + 56 ≠ S2 (требование документации)
+    while [ $((OBFS_S1 + 56)) -eq $OBFS_S2 ]; do
+        OBFS_S2=$((RANDOM % 50 + 15))
+    done
+    
+    # H1-H4: динамические константы заголовков, заменяющие стандартные идентификаторы типов пакетов WireGuard
+    # Генерируем случайные 32-bit числа
     OBFS_H1=$(( $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') % 2147483648 ))
     OBFS_H2=$(( $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') % 2147483648 ))
     OBFS_H3=$(( $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') % 2147483648 ))
@@ -638,7 +656,11 @@ H4 = $OBFS_H4
 #PostDown = iptables -D INPUT -p udp --dport $WG_PORT -m conntrack --ctstate NEW -j ACCEPT --wait 10 --wait-interval 50; iptables -D FORWARD -i $EXTERNAL_IF -o wg0 -j ACCEPT --wait 10 --wait-interval 50; iptables -D FORWARD -i wg0 -j ACCEPT --wait 10 --wait-interval 50; iptables -t nat -D POSTROUTING -o $EXTERNAL_IF -j MASQUERADE --wait 10 --wait-interval 50
 #; ip6tables -D FORWARD -i wg0 -j ACCEPT --wait 10 --wait-interval 50; ip6tables -t nat -D POSTROUTING -o $EXTERNAL_IF -j MASQUERADE --wait 10 --wait-interval 50
 EOF
-
+    
+    # Устанавливаем правильные права доступа на конфиг
+    chmod 600 "$WG_CONFIG"
+    chown root:root "$WG_CONFIG"
+    
     log_success "Конфигурация WireGuard создана"
     log_info "Публичный ключ сервера: $SERVER_PUBLIC_KEY"
     log_info "Внешний IP сервера: $EXTERNAL_IP"
@@ -667,6 +689,26 @@ fi
 iptables -A INPUT -i wg0 -j ACCEPT
 iptables -A FORWARD -i wg0 -j ACCEPT
 iptables -A OUTPUT -o wg0 -j ACCEPT
+
+# Block BitTorrent/DHT ports (common torrent ports) - must be before ACCEPT rules
+# DHT ports: 6881-6889, 4444, 49001
+# Other common torrent ports: 51413, 49152-65534
+iptables -I FORWARD -i wg0 -p tcp --dport 6881:6889 -j DROP
+iptables -I FORWARD -i wg0 -p udp --dport 6881:6889 -j DROP
+iptables -I FORWARD -i wg0 -p tcp --dport 4444 -j DROP
+iptables -I FORWARD -i wg0 -p udp --dport 4444 -j DROP
+iptables -I FORWARD -i wg0 -p tcp --dport 49001 -j DROP
+iptables -I FORWARD -i wg0 -p udp --dport 49001 -j DROP
+iptables -I FORWARD -i wg0 -p tcp --dport 51413 -j DROP
+iptables -I FORWARD -i wg0 -p udp --dport 51413 -j DROP
+iptables -I FORWARD -i wg0 -p tcp --dport 49152:65534 -j DROP
+iptables -I FORWARD -i wg0 -p udp --dport 49152:65534 -j DROP
+
+# Block BitTorrent protocol strings (more aggressive blocking)
+iptables -I FORWARD -i wg0 -m string --string "BitTorrent" --algo bm -j DROP
+iptables -I FORWARD -i wg0 -m string --string "BitTorrent protocol" --algo bm -j DROP
+iptables -I FORWARD -i wg0 -m string --string "d1:ad2:id20:" --algo bm -j DROP
+iptables -I FORWARD -i wg0 -m string --string "d1:md11:ut_metadata" --algo bm -j DROP
 
 # Allow forwarding traffic only from the VPN.
 iptables -A FORWARD -i wg0 -o EXTERNAL_IF_PLACEHOLDER -s WG_NETWORK_PLACEHOLDER -j ACCEPT
