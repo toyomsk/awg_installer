@@ -32,9 +32,9 @@ try:
 except ValueError:
     raise ValueError("ADMIN_IDS должен содержать числовые ID, разделенные запятыми")
 
-# Пути к конфигурации VPN
-AWG_CONFIG_DIR = os.getenv("AWG_CONFIG_DIR", "/opt/docker/amnezia/awg-config")
-DOCKER_COMPOSE_DIR = os.getenv("DOCKER_COMPOSE_DIR", "/opt/docker/amnezia")
+# Пути к конфигурации VPN (при наличии .install_info бот использует его для путей и EXTERNAL_IF, WG_INTERFACE, XRAY_*)
+DOCKER_COMPOSE_DIR = os.getenv("DOCKER_COMPOSE_DIR", "/opt/liberty")
+AWG_CONFIG_DIR = os.getenv("AWG_CONFIG_DIR", os.path.join(DOCKER_COMPOSE_DIR, "config", "wg"))
 
 # SQLite: путь к БД клиентов (источник истины по клиентам)
 _project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -91,6 +91,28 @@ def _load_vpn_base_params(vpn_config_dir: str) -> Dict[str, any]:
         logger.info("Используются базовые параметры VPN по умолчанию")
     
     return result
+
+
+def _parse_install_info(install_info_path: str) -> Dict[str, str]:
+    """Прочитать .install_info Liberty (EXTERNAL_IF, WG_INTERFACE и т.д.)."""
+    result: Dict[str, str] = {}
+    if not os.path.exists(install_info_path):
+        return result
+    try:
+        with open(install_info_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    result[key] = value
+    except Exception as e:
+        logger.warning("Ошибка чтения .install_info: %s", e)
+    return result
+
+
+_INSTALL_INFO = _parse_install_info(os.path.join(DOCKER_COMPOSE_DIR, ".install_info"))
 
 _VPN_BASE_PARAMS = _load_vpn_base_params(AWG_CONFIG_DIR)
 WG_PORT = _VPN_BASE_PARAMS['port']
@@ -162,17 +184,16 @@ AMNEZIA_H3 = _AMNEZIA_PARAMS['H3']
 AMNEZIA_H4 = _AMNEZIA_PARAMS['H4']
 
 # Имя интерфейса WireGuard (обычно wg0)
-WG_INTERFACE = os.getenv("WG_INTERFACE", "wg0")
+# Из .install_info при работе бота (в .env не храним)
+WG_INTERFACE = _INSTALL_INFO.get("WG_INTERFACE") or os.getenv("WG_INTERFACE", "wg0")
+EXTERNAL_IF = _INSTALL_INFO.get("EXTERNAL_IF") or os.getenv("EXTERNAL_IF", "eth0")
 
-# Имя внешнего сетевого интерфейса для получения IP адреса
-EXTERNAL_IF = os.getenv("EXTERNAL_IF", "eth0")
-
-# Xray: путь к конфигу и метаданные (для VLESS-ссылок)
-XRAY_CONFIG_DIR = os.getenv("XRAY_CONFIG_DIR", os.path.join(DOCKER_COMPOSE_DIR, "config", "xray"))
+# Xray: путь и метаданные из .install_info (в .env не храним)
+XRAY_CONFIG_DIR = os.path.join(DOCKER_COMPOSE_DIR, "config", "xray")
 
 
 def _load_xray_metadata() -> dict:
-    """Load Xray metadata from .install_info or env. Keys: public_key, port, server_name, short_id."""
+    """Xray-метаданные из .install_info (при отсутствии — из env)."""
     result = {}
     install_info_path = os.path.join(DOCKER_COMPOSE_DIR, ".install_info")
     if os.path.exists(install_info_path):
@@ -193,16 +214,12 @@ def _load_xray_metadata() -> dict:
                         elif key == "XRAY_SHORT_ID":
                             result["short_id"] = value
         except Exception as e:
-            logger.warning(f"Ошибка чтения .install_info: {e}")
-    # Env overrides
-    if os.getenv("XRAY_PUBLIC_KEY"):
-        result["public_key"] = os.getenv("XRAY_PUBLIC_KEY")
-    if os.getenv("XRAY_PORT"):
-        result["port"] = os.getenv("XRAY_PORT")
-    if os.getenv("XRAY_SERVER_NAME"):
-        result["server_name"] = os.getenv("XRAY_SERVER_NAME")
-    if os.getenv("XRAY_SHORT_ID"):
-        result["short_id"] = os.getenv("XRAY_SHORT_ID")
+            logger.warning("Ошибка чтения .install_info: %s", e)
+    # Fallback на env, если в .install_info нет
+    result.setdefault("public_key", os.getenv("XRAY_PUBLIC_KEY", ""))
+    result.setdefault("port", os.getenv("XRAY_PORT", ""))
+    result.setdefault("server_name", os.getenv("XRAY_SERVER_NAME", ""))
+    result.setdefault("short_id", os.getenv("XRAY_SHORT_ID", ""))
     return result
 
 

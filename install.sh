@@ -969,7 +969,7 @@ generate_xray_config() {
         exit 1
     fi
     
-    log_info "Создание JSON конфигурации Xray (клиенты — пустой массив, добавляются через бота)..."
+    log_info "Создание JSON конфигурации Xray..."
     
     # Создаем JSON конфиг для Xray; clients пустой — клиенты добавляются через Telegram-бота
     cat > "$XRAY_CONFIG" << EOF
@@ -1222,6 +1222,15 @@ open_firewall_xray_port() {
         else
             iptables -I INPUT -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null || true
             log_success "Порт $XRAY_PORT открыт в iptables"
+        fi
+        # FORWARD для VLESS (транзитный трафик через порт Xray)
+        if ! iptables -C FORWARD -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null; then
+            iptables -I FORWARD -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null || true
+            log_info "Правило FORWARD для Xray (dport $XRAY_PORT) добавлено"
+        fi
+        if ! iptables -C FORWARD -p tcp --sport "$XRAY_PORT" -j ACCEPT 2>/dev/null; then
+            iptables -I FORWARD -p tcp --sport "$XRAY_PORT" -j ACCEPT 2>/dev/null || true
+            log_info "Правило FORWARD для Xray (sport $XRAY_PORT) добавлено"
         fi
         save_iptables_rules
     fi
@@ -1750,6 +1759,8 @@ uninstall() {
             ufw delete allow "${uninstall_xray_port}/tcp" 2>/dev/null || true
         else
             iptables -D INPUT -p tcp --dport "$uninstall_xray_port" -j ACCEPT 2>/dev/null || true
+            iptables -D FORWARD -p tcp --dport "$uninstall_xray_port" -j ACCEPT 2>/dev/null || true
+            iptables -D FORWARD -p tcp --sport "$uninstall_xray_port" -j ACCEPT 2>/dev/null || true
         fi
         log_info "Правило для Xray (порт $uninstall_xray_port) удалено"
     fi
