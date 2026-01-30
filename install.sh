@@ -918,7 +918,7 @@ generate_xray_params() {
     # Проверяем что Docker доступен
     if command -v docker &> /dev/null && docker info &> /dev/null; then
         log_info "Используем Docker для генерации x25519 ключей..."
-        local key_output=$(docker run --rm ghcr.io/xtls/xray-core:latest xray x25519 2>/dev/null)
+        local key_output=$(docker run --rm teddysun/xray:latest /usr/bin/xray x25519 2>/dev/null)
         if echo "$key_output" | grep -q "Private:"; then
             XRAY_PRIVATE_KEY=$(echo "$key_output" | grep "Private:" | awk '{print $2}')
             XRAY_PUBLIC_KEY=$(echo "$key_output" | grep "Public:" | awk '{print $2}')
@@ -1238,7 +1238,7 @@ EOF
     if [[ "$XRAY_ENABLED" == "true" ]]; then
         cat >> "$COMPOSE_FILE" << EOF
   xray-core:
-    image: ghcr.io/xtls/xray-core:latest
+    image: teddysun/xray:latest
     container_name: xray-core
 
     network_mode: host
@@ -1246,7 +1246,7 @@ EOF
     volumes:
       - ./awg-config/xray-config.json:/etc/xray/config.json:ro
 
-    command: xray -config /etc/xray/config.json
+    command: -config /etc/xray/config.json
 
     restart: always
 EOF
