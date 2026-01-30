@@ -2027,7 +2027,7 @@ main() {
         generate_xray_params
         generate_xray_config
         create_xray_startup_script
-#        generate_xray_client_config
+        generate_xray_client_config
     fi
     
     create_docker_compose
