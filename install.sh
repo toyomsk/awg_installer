@@ -1080,63 +1080,72 @@ setup_torrent_blocking() {
     
     log_info "Применение правил блокировки торрент трафика..."
     
-    # Блокировка торрент портов на уровне OUTPUT (исходящий трафик)
+    # Определяем SSH порт для информационного сообщения
+    local ssh_port=$(grep -E "^[[:space:]]*Port[[:space:]]+" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+    if [ -z "$ssh_port" ]; then
+        ssh_port=22
+    fi
+    
+    # Блокируем только новые соединения на торрент порты (не установленные)
     # DHT ports: 6881-6889, 4444, 49001
-    # Other common torrent ports: 51413, 49152-65534
-    iptables -I OUTPUT -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p tcp --dport 4444 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p udp --dport 4444 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p tcp --dport 49001 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p udp --dport 49001 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p tcp --dport 51413 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p udp --dport 51413 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p tcp --dport 49152:65534 -j DROP 2>/dev/null || true
-    iptables -I OUTPUT -p udp --dport 49152:65534 -j DROP 2>/dev/null || true
+    # Other common torrent ports: 51413
+    # ВАЖНО: НЕ блокируем широкий диапазон 49152-65534, так как это динамические порты!
     
-    # Блокировка торрент портов на уровне INPUT (входящий трафик)
-    iptables -I INPUT -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p tcp --dport 4444 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p udp --dport 4444 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p tcp --dport 49001 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p udp --dport 49001 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p tcp --dport 51413 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p udp --dport 51413 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p tcp --dport 49152:65534 -j DROP 2>/dev/null || true
-    iptables -I INPUT -p udp --dport 49152:65534 -j DROP 2>/dev/null || true
+    # OUTPUT - исходящий трафик (только новые соединения)
+    iptables -I OUTPUT -m state --state NEW -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -I OUTPUT -m state --state NEW -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -I OUTPUT -m state --state NEW -p tcp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -I OUTPUT -m state --state NEW -p udp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -I OUTPUT -m state --state NEW -p tcp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -I OUTPUT -m state --state NEW -p udp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -I OUTPUT -m state --state NEW -p tcp --dport 51413 -j DROP 2>/dev/null || true
+    iptables -I OUTPUT -m state --state NEW -p udp --dport 51413 -j DROP 2>/dev/null || true
     
-    # Блокировка торрент портов на уровне FORWARD (транзитный трафик)
-    iptables -I FORWARD -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p tcp --dport 4444 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p udp --dport 4444 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p tcp --dport 49001 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p udp --dport 49001 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p tcp --dport 51413 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p udp --dport 51413 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p tcp --dport 49152:65534 -j DROP 2>/dev/null || true
-    iptables -I FORWARD -p udp --dport 49152:65534 -j DROP 2>/dev/null || true
+    # INPUT - входящий трафик (только новые соединения)
+    # Торрент порты не пересекаются с SSH (22) и VPN портами, поэтому безопасно блокировать
+    iptables -I INPUT -m state --state NEW -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -I INPUT -m state --state NEW -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -I INPUT -m state --state NEW -p tcp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -I INPUT -m state --state NEW -p udp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -I INPUT -m state --state NEW -p tcp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -I INPUT -m state --state NEW -p udp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -I INPUT -m state --state NEW -p tcp --dport 51413 -j DROP 2>/dev/null || true
+    iptables -I INPUT -m state --state NEW -p udp --dport 51413 -j DROP 2>/dev/null || true
     
-    # Блокировка BitTorrent протокола по строкам (более агрессивная блокировка)
+    # FORWARD - транзитный трафик (только новые соединения)
+    iptables -I FORWARD -m state --state NEW -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -I FORWARD -m state --state NEW -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -I FORWARD -m state --state NEW -p tcp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -I FORWARD -m state --state NEW -p udp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -I FORWARD -m state --state NEW -p tcp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -I FORWARD -m state --state NEW -p udp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -I FORWARD -m state --state NEW -p tcp --dport 51413 -j DROP 2>/dev/null || true
+    iptables -I FORWARD -m state --state NEW -p udp --dport 51413 -j DROP 2>/dev/null || true
+    
+    # Блокировка BitTorrent протокола по строкам (только для новых соединений)
+    # Исключаем SSH и VPN порты из проверки строк
     if iptables -m string --help &>/dev/null 2>&1; then
-        iptables -I OUTPUT -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
-        iptables -I OUTPUT -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
-        iptables -I OUTPUT -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
-        iptables -I OUTPUT -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
+        # OUTPUT - только для новых соединений
+        iptables -I OUTPUT -m state --state NEW -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
+        iptables -I OUTPUT -m state --state NEW -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
+        iptables -I OUTPUT -m state --state NEW -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
+        iptables -I OUTPUT -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
         
-        iptables -I INPUT -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
-        iptables -I INPUT -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
-        iptables -I INPUT -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
-        iptables -I INPUT -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
+        # INPUT - только для новых соединений
+        iptables -I INPUT -m state --state NEW -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
+        iptables -I INPUT -m state --state NEW -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
+        iptables -I INPUT -m state --state NEW -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
+        iptables -I INPUT -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
         
-        iptables -I FORWARD -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
-        iptables -I FORWARD -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
-        iptables -I FORWARD -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
-        iptables -I FORWARD -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
+        # FORWARD - только для новых соединений
+        iptables -I FORWARD -m state --state NEW -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
+        iptables -I FORWARD -m state --state NEW -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
+        iptables -I FORWARD -m state --state NEW -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
+        iptables -I FORWARD -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
     fi
     
     log_success "Универсальные правила блокировки торрентов применены"
+    log_info "SSH порт ($ssh_port) и VPN порты исключены из блокировки"
 }
 
 # Создание скрипта запуска контейнера
