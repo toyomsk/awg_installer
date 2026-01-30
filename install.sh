@@ -967,6 +967,11 @@ generate_xray_params() {
         exit 1
     fi
     
+    # Xray Reality ожидает base64.RawURLEncoding (документация: xray x25519 по умолчанию)
+    # Преобразуем + → -, / → _ (стандартный base64 от OpenSSL в URL-safe)
+    XRAY_PRIVATE_KEY=$(echo -n "$XRAY_PRIVATE_KEY" | tr '+/' '-_')
+    XRAY_PUBLIC_KEY=$(echo -n "$XRAY_PUBLIC_KEY" | tr '+/' '-_')
+    
     log_success "Ключи Reality сгенерированы"
     log_info "  Private Key: ${XRAY_PRIVATE_KEY:0:32}..."
     log_info "  Public Key: ${XRAY_PUBLIC_KEY:0:32}..."
