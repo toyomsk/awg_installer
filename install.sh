@@ -465,6 +465,7 @@ get_config_params() {
             log_info "Выбраны оба: WireGuard + Xray-core"
             ;;
     esac
+    log_info "XRAY_ENABLED установлен в: $XRAY_ENABLED"
     
     # Настройка WireGuard (если не выбран только Xray)
     if [ "$vpn_choice" != "2" ]; then
@@ -1227,7 +1228,9 @@ EOF
     fi
     
     # Добавляем сервис Xray если он включен
-    if [ "$XRAY_ENABLED" = "true" ]; then
+    log_info "Проверка XRAY_ENABLED в create_docker_compose: XRAY_ENABLED='$XRAY_ENABLED'"
+    if [[ "$XRAY_ENABLED" == "true" ]]; then
+        log_info "Добавление сервиса Xray в docker-compose.yml..."
         cat >> "$COMPOSE_FILE" << EOF
   xray-core:
     image: xtls/xray-core:latest
@@ -1242,6 +1245,9 @@ EOF
 
     restart: always
 EOF
+        log_success "Сервис Xray добавлен в docker-compose.yml"
+    else
+        log_info "Xray отключен, сервис не добавляется"
     fi
     
     log_success "docker-compose.yml создан"
@@ -1955,8 +1961,11 @@ main() {
     check_utils
     
     # Пытаемся загрузить метаданные, если файл существует (для проверки существующего пользователя)
+    # Но сбрасываем XRAY_ENABLED, так как пользователь будет выбирать заново
     if [ -f "$INSTALL_INFO_FILE" ]; then
         load_install_info 2>/dev/null || true
+        # Сбрасываем XRAY_ENABLED, чтобы пользователь мог выбрать заново
+        XRAY_ENABLED=false
     fi
     
     # Запрос параметров пользователя и SSH (если нужно)
@@ -1985,13 +1994,18 @@ main() {
     fi
     
     # Генерация конфигурации Xray (если включен)
+    log_info "Проверка XRAY_ENABLED перед генерацией конфигурации: XRAY_ENABLED=$XRAY_ENABLED"
     if [ "$XRAY_ENABLED" = "true" ]; then
+        log_info "Генерация конфигурации Xray..."
         generate_xray_params
         generate_xray_config
         create_xray_startup_script
 #        generate_xray_client_config
+    else
+        log_info "Xray отключен, пропускаем генерацию конфигурации"
     fi
     
+    log_info "Проверка XRAY_ENABLED перед созданием docker-compose: XRAY_ENABLED=$XRAY_ENABLED"
     create_docker_compose
     start_container
 
