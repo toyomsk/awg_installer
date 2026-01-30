@@ -11,6 +11,8 @@ NC='\033[0m' # No Color
 
 # Переменные
 INSTALL_DIR="/opt/docker/liberty"
+# Директория, из которой вызвали скрипт (для поиска telegram-bot при запуске из клона репозитория)
+INITIAL_CWD="${INITIAL_CWD:-$(pwd)}"
 CONFIG_DIR="$INSTALL_DIR/config"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 WG_CONFIG="$CONFIG_DIR/wg/wg0.conf"
@@ -1352,7 +1354,6 @@ check_status() {
         if docker exec liberty-wg wg show wg0 &>/dev/null; then
             log_success "WireGuard конфигурация активна (в контейнере)"
             checks_passed=$((checks_passed + 2))
-            docker exec liberty-wg wg show wg0 2>/dev/null || true
         else
             log_error "WireGuard конфигурация не активна в контейнере"
             checks_failed=$((checks_failed + 2))
@@ -1514,167 +1515,45 @@ load_install_info() {
     return 0
 }
 
-# Установка Telegram-бота для управления клиентами
+# Установка Telegram-бота: копируем ./telegram-bot в /opt/telegram-bot и запускаем там install.sh
 install_bot() {
     local SCRIPT_DIR
     SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-    local BOT_DIR="$INSTALL_DIR/telegram-bot"
+    local BOT_DEST="/opt/telegram-bot"
 
     log_step "Установка Telegram-бота"
 
-    # Исходники бота: рядом со скриптом или в INSTALL_DIR (репозиторий)
+    # Исходники: рядом со скриптом
     local BOT_SOURCE=""
     if [ -d "$SCRIPT_DIR/telegram-bot" ] && [ -f "$SCRIPT_DIR/telegram-bot/requirements.txt" ]; then
         BOT_SOURCE="$SCRIPT_DIR/telegram-bot"
-    elif [ -d "$INSTALL_DIR/telegram-bot" ] && [ -f "$INSTALL_DIR/telegram-bot/requirements.txt" ]; then
-        BOT_SOURCE="$INSTALL_DIR/telegram-bot"
     fi
     if [ -z "$BOT_SOURCE" ]; then
-        log_error "Директория telegram-bot не найдена (искали: $SCRIPT_DIR/telegram-bot и $INSTALL_DIR/telegram-bot) или отсутствует requirements.txt"
+        log_error "Директория telegram-bot не найдена (ожидается $SCRIPT_DIR/telegram-bot)."
         return 1
     fi
 
-    # Установка системных зависимостей для бота
-    if command -v apt-get &>/dev/null; then
-        apt-get update -qq
-        apt-get install -y -qq python3 python3-pip python3-venv qrencode wireguard-tools curl 2>/dev/null || true
-    elif command -v yum &>/dev/null; then
-        yum install -y python3 python3-pip qrencode wireguard-tools curl 2>/dev/null || true
-        python3 -m ensurepip --upgrade 2>/dev/null || true
-    fi
-
-    mkdir -p "$BOT_DIR"
-    # Копируем файлы бота (исключая venv, __pycache__, .env, .git)
+    mkdir -p /opt
+    log_info "Копирую telegram-bot в $BOT_DEST..."
     if command -v rsync &>/dev/null; then
         rsync -a --exclude=venv --exclude=__pycache__ --exclude=.env --exclude=.git \
-            "$BOT_SOURCE/" "$BOT_DIR/"
+            "$BOT_SOURCE/" "$BOT_DEST/"
     else
-        for item in "$BOT_SOURCE"/*; do
-            [ -e "$item" ] || continue
-            name=$(basename "$item")
-            [ "$name" = "venv" ] || [ "$name" = ".env" ] || [ "$name" = ".git" ] && continue
-            cp -R "$item" "$BOT_DIR/" 2>/dev/null || cp "$item" "$BOT_DIR/"
-        done
-        for dir in "$BOT_SOURCE"/bot "$BOT_SOURCE"/config; do
-            [ -d "$dir" ] && [ ! -d "$BOT_DIR/$(basename "$dir")" ] && cp -R "$dir" "$BOT_DIR/"
-        done
+        rm -rf "$BOT_DEST"
+        cp -R "$BOT_SOURCE" "$BOT_DEST"
+        rm -rf "$BOT_DEST/venv" "$BOT_DEST/.env" 2>/dev/null || true
     fi
 
-    # Виртуальное окружение и зависимости
-    if [ ! -d "$BOT_DIR/venv" ]; then
-        python3 -m venv "$BOT_DIR/venv"
-        log_success "Виртуальное окружение создано"
-    fi
-    # shellcheck source=/dev/null
-    "$BOT_DIR/venv/bin/pip" install -q --upgrade pip
-    "$BOT_DIR/venv/bin/pip" install -q -r "$BOT_DIR/requirements.txt"
-    log_success "Python-зависимости установлены"
-
-    # .env: не перезаписывать без подтверждения
-    local create_env=true
-    if [ -f "$BOT_DIR/.env" ]; then
-        echo ""
-        local overwrite_env=""
-        while [[ ! "$overwrite_env" =~ ^[yYnN]$ ]]; do
-            echo -ne "${BLUE}[?]${NC} Файл .env уже существует. Перезаписать? (y/N): " >&2
-            read overwrite_env < /dev/tty
-        done
-        [[ ! "$overwrite_env" =~ ^[yY]$ ]] && create_env=false
+    if [ ! -f "$BOT_DEST/install.sh" ]; then
+        log_error "В $BOT_DEST не найден install.sh"
+        return 1
     fi
 
-    if [ "$create_env" = true ]; then
-        echo ""
-        log_info "Введите BOT_TOKEN (от @BotFather) и ADMIN_IDS (Telegram ID через запятую)."
-        local BOT_TOKEN="" ADMIN_IDS=""
-        while [ -z "$BOT_TOKEN" ]; do
-            echo -ne "${BLUE}[?]${NC} BOT_TOKEN: " >&2
-            read BOT_TOKEN < /dev/tty
-        done
-        while [ -z "$ADMIN_IDS" ]; do
-            echo -ne "${BLUE}[?]${NC} ADMIN_IDS (через запятую): " >&2
-            read ADMIN_IDS < /dev/tty
-        done
-        local DEFAULT_EXTERNAL_IF="eth0"
-        command -v ip &>/dev/null && DEFAULT_EXTERNAL_IF=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -1) || true
-        [ -z "$DEFAULT_EXTERNAL_IF" ] && DEFAULT_EXTERNAL_IF="eth0"
-        cat > "$BOT_DIR/.env" << EOF
-# Токен бота от BotFather
-BOT_TOKEN=$BOT_TOKEN
-
-# ID администраторов (через запятую)
-ADMIN_IDS=$ADMIN_IDS
-
-# Путь к директории с конфигурацией WireGuard (Liberty)
-VPN_CONFIG_DIR=$INSTALL_DIR/config/wg
-
-# Путь к директории с docker-compose (Liberty)
-DOCKER_COMPOSE_DIR=$INSTALL_DIR
-
-# Начальный IP адрес для клиентов (последний октет)
-VPN_CLIENT_START_IP=2
-
-# DNS серверы для клиентов (через запятую)
-DNS_SERVERS=1.1.1.1,8.8.8.8
-
-# Имя интерфейса WireGuard (обычно wg0)
-WG_INTERFACE=wg0
-
-# Имя внешнего сетевого интерфейса
-EXTERNAL_IF=$DEFAULT_EXTERNAL_IF
-EOF
-        chmod 600 "$BOT_DIR/.env"
-        log_success "Файл .env создан"
-    fi
-
-    # Предложение systemd-сервиса
+    log_success "Скопировано. Запускаю $BOT_DEST/install.sh"
     echo ""
-    local create_svc=""
-    while [[ ! "$create_svc" =~ ^[yYnN]$ ]]; do
-        echo -ne "${BLUE}[?]${NC} Создать systemd-сервис для автозапуска бота? (y/N): " >&2
-        read create_svc < /dev/tty
-    done
-    if [[ "$create_svc" =~ ^[yY]$ ]]; then
-        local SERVICE_FILE="/etc/systemd/system/liberty-bot.service"
-        cat > "$SERVICE_FILE" << EOF
-[Unit]
-Description=Liberty Telegram Bot (VPN management)
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$BOT_DIR
-Environment="PATH=$BOT_DIR/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-Environment="PYTHONPATH=$BOT_DIR"
-EnvironmentFile=$BOT_DIR/.env
-ExecStart=$BOT_DIR/venv/bin/python -m bot.main
-StandardOutput=journal
-StandardError=journal
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        systemctl daemon-reload
-        log_success "Сервис создан: $SERVICE_FILE"
-        local enable_svc=""
-        while [[ ! "$enable_svc" =~ ^[yYnN]$ ]]; do
-            echo -ne "${BLUE}[?]${NC} Включить автозапуск и запустить сервис сейчас? (y/N): " >&2
-            read enable_svc < /dev/tty
-        done
-        if [[ "$enable_svc" =~ ^[yY]$ ]]; then
-            systemctl enable liberty-bot.service
-            systemctl start liberty-bot.service
-            log_success "Сервис liberty-bot включен и запущен"
-        fi
-    fi
-
+    (cd "$BOT_DEST" && bash ./install.sh)
     echo ""
-    log_success "Установка Telegram-бота завершена."
-    log_info "Запуск вручную: cd $BOT_DIR && $BOT_DIR/venv/bin/python -m bot.main"
-    log_info "Сервис: systemctl start liberty-bot.service"
-    echo ""
+    log_success "Установка Telegram-бота завершена. Каталог: $BOT_DEST"
 }
 
 # Интерактивное меню в начале (сервер / только бот / сервер и бот / выход)
