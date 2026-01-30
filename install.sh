@@ -2268,7 +2268,7 @@ main() {
     create_directories
     
     # Настройка универсальной блокировки торрентов (применяется один раз для всех)
-    setup_torrent_blocking
+#    setup_torrent_blocking
     open_firewall_wg_port
     open_firewall_xray_port
 
