@@ -914,37 +914,47 @@ generate_xray_params() {
     fi
     log_success "Short ID сгенерирован: $XRAY_SHORT_ID"
     
-    # Генерация ключей для Reality (private/public key pair)
+    # Генерация ключей для Reality (private/public key pair) — только настоящие x25519
     log_info "Генерация ключей Reality..."
-    # Используем xray для генерации ключей через Docker (если доступен)
-    # Проверяем что Docker доступен
+    local keys_generated=false
+    
+    # Пробуем Docker: образ teddysun/xray с переопределением entrypoint
     if command -v docker &> /dev/null && docker info &> /dev/null; then
         log_info "Используем Docker для генерации x25519 ключей..."
-        local key_output=$(docker run --rm teddysun/xray:latest /usr/bin/xray x25519 2>/dev/null)
+        local key_output
+        key_output=$(docker run --rm --entrypoint "" teddysun/xray:latest /usr/bin/xray x25519 2>/dev/null) || \
+        key_output=$(docker run --rm teddysun/xray:latest x25519 2>/dev/null) || true
         if echo "$key_output" | grep -q "Private:"; then
             XRAY_PRIVATE_KEY=$(echo "$key_output" | grep "Private:" | awk '{print $2}')
             XRAY_PUBLIC_KEY=$(echo "$key_output" | grep "Public:" | awk '{print $2}')
-            log_success "Ключи x25519 сгенерированы через Docker"
-        else
-            log_warning "Не удалось сгенерировать ключи через Docker, используем альтернативный метод"
-            XRAY_PRIVATE_KEY=$(openssl rand -hex 32 | head -c 64)
-            XRAY_PUBLIC_KEY=$(openssl rand -hex 32 | head -c 64)
+            [ -n "$XRAY_PRIVATE_KEY" ] && [ -n "$XRAY_PUBLIC_KEY" ] && keys_generated=true
         fi
-    else
-        # Fallback: используем openssl для генерации случайных ключей
-        # Примечание: это не настоящие x25519 ключи, но для тестирования подойдет
-        # В продакшене лучше использовать xray для генерации после установки Docker
-        log_warning "Docker недоступен, используем упрощенную генерацию ключей"
-        log_info "После установки Docker ключи будут перегенерированы через xray"
-        XRAY_PRIVATE_KEY=$(openssl rand -hex 32 | head -c 64)
-        XRAY_PUBLIC_KEY=$(openssl rand -hex 32 | head -c 64)
     fi
     
-    if [ -z "$XRAY_PRIVATE_KEY" ] || [ -z "$XRAY_PUBLIC_KEY" ]; then
-        log_warning "Не удалось сгенерировать ключи Reality автоматически"
-        log_info "Используем упрощенную генерацию..."
-        XRAY_PRIVATE_KEY=$(openssl rand -hex 32 | head -c 64)
-        XRAY_PUBLIC_KEY=$(openssl rand -hex 32 | head -c 64)
+    # Fallback: OpenSSL x25519 (настоящие ключи, не случайные байты)
+    if [ "$keys_generated" != "true" ]; then
+        log_info "Генерация x25519 ключей через OpenSSL..."
+        local priv_pem pub_der
+        priv_pem=$(mktemp)
+        pub_der=$(mktemp)
+        if openssl genpkey -algorithm X25519 -out "$priv_pem" 2>/dev/null; then
+            # Сырой приватный ключ: из PEM извлекаем последние 32 байта (base64 decode последнего блока)
+            XRAY_PRIVATE_KEY=$(openssl asn1parse -in "$priv_pem" 2>/dev/null | grep "OCTET STRING" | tail -1 | sed 's/.*:\([^:]*\)/\1/' | tr -d ' \n' | xxd -r -p 2>/dev/null | base64 -w 0 2>/dev/null)
+            # Публичный ключ из того же приватного
+            openssl pkey -in "$priv_pem" -pubout -outform DER 2>/dev/null > "$pub_der"
+            if [ -s "$pub_der" ]; then
+                # В SPKI DER для X25519 ключ в BIT STRING: часто 0x00 + 32 байта в конце
+                XRAY_PUBLIC_KEY=$(tail -c 33 "$pub_der" | tail -c +2 | base64 -w 0 2>/dev/null)
+                [ -z "$XRAY_PUBLIC_KEY" ] && XRAY_PUBLIC_KEY=$(tail -c 32 "$pub_der" | base64 -w 0 2>/dev/null)
+                [ -n "$XRAY_PRIVATE_KEY" ] && [ -n "$XRAY_PUBLIC_KEY" ] && keys_generated=true
+            fi
+        fi
+        rm -f "$priv_pem" "$pub_der"
+    fi
+    
+    if [ "$keys_generated" != "true" ]; then
+        log_error "Не удалось сгенерировать x25519 ключи (нужны Docker или OpenSSL с поддержкой X25519)"
+        exit 1
     fi
     
     log_success "Ключи Reality сгенерированы"
