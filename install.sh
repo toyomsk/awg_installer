@@ -1049,6 +1049,9 @@ XRAY_SCRIPT_EOF
 setup_torrent_blocking() {
     log_step "Настройка универсальной блокировки торрентов"
     
+    if ! command -v ufw &>/dev/null || ! ufw status 2>/dev/null | grep -q "Status: active"; then
+        ensure_iptables_persistent
+    fi
     log_info "Применение правил блокировки торрент трафика..."
     
     # Определяем SSH порт для информационного сообщения
@@ -1115,6 +1118,9 @@ setup_torrent_blocking() {
         iptables -I FORWARD -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
     fi
     
+    if ! command -v ufw &>/dev/null || ! ufw status 2>/dev/null | grep -q "Status: active"; then
+        save_iptables_rules
+    fi
     log_success "Универсальные правила блокировки торрентов применены"
     log_info "SSH порт ($ssh_port) и VPN порты исключены из блокировки"
 }
@@ -1164,7 +1170,37 @@ remove_torrent_blocking() {
         iptables -D FORWARD -m state --state NEW -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
         iptables -D FORWARD -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
     fi
+    if ! command -v ufw &>/dev/null || ! ufw status 2>/dev/null | grep -q "Status: active"; then
+        save_iptables_rules
+    fi
     log_success "Правила блокировки торрентов удалены"
+}
+
+# Установить iptables-persistent, чтобы правила переживали перезагрузку (только если не используется ufw)
+ensure_iptables_persistent() {
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        return 0
+    fi
+    if command -v apt-get &>/dev/null; then
+        if ! command -v netfilter-persistent &>/dev/null && ! dpkg -s iptables-persistent &>/dev/null; then
+            log_info "Установка iptables-persistent для сохранения правил после перезагрузки..."
+            DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent &>/dev/null || true
+        fi
+    fi
+}
+
+# Сохранить текущие правила iptables (netfilter-persistent или в /etc/iptables)
+save_iptables_rules() {
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        return 0
+    fi
+    if command -v netfilter-persistent &>/dev/null; then
+        netfilter-persistent save 2>/dev/null && log_info "Правила iptables сохранены (netfilter-persistent)" || true
+    elif [ -w /etc/iptables ] 2>/dev/null || (mkdir -p /etc/iptables 2>/dev/null && [ -w /etc/iptables ]); then
+        iptables-save > /etc/iptables/rules.v4 2>/dev/null && true
+        ip6tables-save > /etc/iptables/rules.v6 2>/dev/null && true
+        log_info "Правила iptables сохранены в /etc/iptables"
+    fi
 }
 
 # Открытие порта Xray в фаерволе (ufw или iptables)
@@ -1179,6 +1215,7 @@ open_firewall_xray_port() {
             log_success "Порт $XRAY_PORT открыт в ufw"
         fi
     else
+        ensure_iptables_persistent
         # iptables: разрешаем входящий TCP на порт Xray (в начало цепочки)
         if iptables -C INPUT -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null; then
             log_info "Порт $XRAY_PORT уже разрешён в iptables"
@@ -1186,6 +1223,7 @@ open_firewall_xray_port() {
             iptables -I INPUT -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null || true
             log_success "Порт $XRAY_PORT открыт в iptables"
         fi
+        save_iptables_rules
     fi
 }
 
@@ -1201,12 +1239,14 @@ open_firewall_wg_port() {
             log_success "Порт $WG_PORT открыт в ufw"
         fi
     else
+        ensure_iptables_persistent
         if iptables -C INPUT -p udp --dport "$WG_PORT" -j ACCEPT 2>/dev/null; then
             log_info "Порт $WG_PORT уже разрешён в iptables"
         else
             iptables -I INPUT -p udp --dport "$WG_PORT" -j ACCEPT 2>/dev/null || true
             log_success "Порт $WG_PORT открыт в iptables"
         fi
+        save_iptables_rules
     fi
 }
 
@@ -1701,6 +1741,9 @@ uninstall() {
         fi
         log_info "Правило для Xray (порт $uninstall_xray_port) удалено"
     fi
+    if ! command -v ufw &>/dev/null || ! ufw status 2>/dev/null | grep -q "Status: active"; then
+        save_iptables_rules
+    fi
     remove_torrent_blocking
 
     # Остановка и удаление контейнеров
@@ -1725,6 +1768,22 @@ uninstall() {
         log_info "Удаление директории $INSTALL_DIR..."
         rm -rf "$INSTALL_DIR"
         log_success "Директория удалена"
+    fi
+
+    # Остановка и удаление Telegram-бота (/opt/telegram-bot)
+    local BOT_DEST="/opt/telegram-bot"
+    if [ -f /etc/systemd/system/vpn-bot.service ]; then
+        log_info "Остановка и отключение сервиса vpn-bot..."
+        systemctl stop vpn-bot.service 2>/dev/null || true
+        systemctl disable vpn-bot.service 2>/dev/null || true
+        rm -f /etc/systemd/system/vpn-bot.service
+        systemctl daemon-reload 2>/dev/null || true
+        log_success "Сервис vpn-bot удалён"
+    fi
+    if [ -d "$BOT_DEST" ]; then
+        log_info "Удаление директории $BOT_DEST..."
+        rm -rf "$BOT_DEST"
+        log_success "Директория бота удалена"
     fi
     
     log_success "Удаление завершено"
