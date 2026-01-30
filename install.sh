@@ -420,7 +420,7 @@ calculate_server_ip() {
 # Выбор типа VPN
 choose_vpn_type() {
     echo "" >&2
-    log_info "Выберите тип VPN для установки:"
+    echo -e "${BLUE}[INFO]${NC} Выберите тип VPN для установки:" >&2
     echo "" >&2
     echo "  1) Только WireGuard" >&2
     echo "  2) Только Xray-core (VLESS + XTLS-Reality + Vision)" >&2
@@ -436,6 +436,7 @@ choose_vpn_type() {
         fi
     done
     
+    # Выводим только число в stdout, все остальное в stderr
     echo "$vpn_choice"
 }
 
@@ -449,8 +450,13 @@ get_config_params() {
     
     # Выбор типа VPN
     local vpn_choice=$(choose_vpn_type)
+    log_info "Получен выбор VPN: vpn_choice='$vpn_choice'"
     
     # Устанавливаем XRAY_ENABLED на основе выбора (в родительском процессе)
+    # Убираем пробелы и переводы строк из выбора
+    vpn_choice=$(echo "$vpn_choice" | tr -d '[:space:]')
+    log_info "Очищенный выбор VPN: vpn_choice='$vpn_choice'"
+    
     case "$vpn_choice" in
         1)
             XRAY_ENABLED=false
@@ -463,6 +469,10 @@ get_config_params() {
         3)
             XRAY_ENABLED=true
             log_info "Выбраны оба: WireGuard + Xray-core"
+            ;;
+        *)
+            log_error "Неизвестный выбор VPN: '$vpn_choice', используем по умолчанию WireGuard"
+            XRAY_ENABLED=false
             ;;
     esac
     log_info "XRAY_ENABLED установлен в: $XRAY_ENABLED"
