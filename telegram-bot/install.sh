@@ -84,6 +84,17 @@ while IFS= read -r line; do
     export "${line%%=*}=${line#*=}"
 done < .env 2>/dev/null || true
 
+# Дефолты из .install_info Liberty (если сервер уже установлен)
+INSTALL_INFO_PATH="/opt/docker/liberty/.install_info"
+if [ -f "$INSTALL_INFO_PATH" ]; then
+    # shellcheck source=/dev/null
+    . "$INSTALL_INFO_PATH" 2>/dev/null || true
+    DOCKER_COMPOSE_DIR="${DOCKER_COMPOSE_DIR:-/opt/docker/liberty}"
+    AWG_CONFIG_DIR="${AWG_CONFIG_DIR:-/opt/docker/liberty/config/wg}"
+    EXTERNAL_IF="${EXTERNAL_IF:-}"
+    WG_INTERFACE="${WG_INTERFACE:-wg0}"
+fi
+
 # Функция для запроса значения с дефолтом
 ask_with_default() {
     local prompt=$1
@@ -153,13 +164,13 @@ DEFAULT_EXTERNAL_IF=$(ip route 2>/dev/null | grep default | awk '{print $5}' | h
 ask_with_default "Введите EXTERNAL_IF (внешний сетевой интерфейс)" "${EXTERNAL_IF:-${DEFAULT_EXTERNAL_IF:-eth0}}" EXTERNAL_IF
 
 # Xray (опционально)
-echo ""
-info "Xray (VLESS Reality): при пустом — бот читает из DOCKER_COMPOSE_DIR/.install_info"
-ask_with_default "Введите XRAY_CONFIG_DIR (пусто = из .install_info)" "${XRAY_CONFIG_DIR:-}" XRAY_CONFIG_DIR
-ask_with_default "Введите XRAY_PUBLIC_KEY (пусто = из .install_info)" "${XRAY_PUBLIC_KEY:-}" XRAY_PUBLIC_KEY
-ask_with_default "Введите XRAY_PORT (пусто = из .install_info)" "${XRAY_PORT:-}" XRAY_PORT
-ask_with_default "Введите XRAY_SERVER_NAME / SNI (пусто = из .install_info)" "${XRAY_SERVER_NAME:-}" XRAY_SERVER_NAME
-ask_with_default "Введите XRAY_SHORT_ID (пусто = из .install_info)" "${XRAY_SHORT_ID:-}" XRAY_SHORT_ID
+#echo ""
+#info "Xray (VLESS Reality): при пустом — бот читает из DOCKER_COMPOSE_DIR/.install_info"
+#ask_with_default "Введите XRAY_CONFIG_DIR (пусто = из .install_info)" "${XRAY_CONFIG_DIR:-}" XRAY_CONFIG_DIR
+#ask_with_default "Введите XRAY_PUBLIC_KEY (пусто = из .install_info)" "${XRAY_PUBLIC_KEY:-}" XRAY_PUBLIC_KEY
+#ask_with_default "Введите XRAY_PORT (пусто = из .install_info)" "${XRAY_PORT:-}" XRAY_PORT
+#ask_with_default "Введите XRAY_SERVER_NAME / SNI (пусто = из .install_info)" "${XRAY_SERVER_NAME:-}" XRAY_SERVER_NAME
+#ask_with_default "Введите XRAY_SHORT_ID (пусто = из .install_info)" "${XRAY_SHORT_ID:-}" XRAY_SHORT_ID
 
 # Записываем значения в .env
 info "Запись конфигурации в .env файл..."
