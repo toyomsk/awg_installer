@@ -1180,6 +1180,27 @@ open_firewall_xray_port() {
     fi
 }
 
+# Открытие порта WireGuard в фаерволе (ufw или iptables, UDP)
+open_firewall_wg_port() {
+    [ -z "$WG_NETWORK" ] || [ -z "$WG_PORT" ] && return 0
+    log_step "Открытие порта WireGuard $WG_PORT в фаерволе"
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        if ufw status 2>/dev/null | grep -q "${WG_PORT}/udp"; then
+            log_info "Порт $WG_PORT уже разрешён в ufw"
+        else
+            ufw allow "${WG_PORT}/udp" comment 'WireGuard' 2>/dev/null || true
+            log_success "Порт $WG_PORT открыт в ufw"
+        fi
+    else
+        if iptables -C INPUT -p udp --dport "$WG_PORT" -j ACCEPT 2>/dev/null; then
+            log_info "Порт $WG_PORT уже разрешён в iptables"
+        else
+            iptables -I INPUT -p udp --dport "$WG_PORT" -j ACCEPT 2>/dev/null || true
+            log_success "Порт $WG_PORT открыт в iptables"
+        fi
+    fi
+}
+
 # Создание скрипта запуска контейнера
 create_startup_script() {
     log_step "Создание скрипта запуска контейнера"
@@ -1712,11 +1733,26 @@ change_server_ip() {
         fi
     fi
     
+    # Если Xray установлен — подгружаем порт и SNI из конфига (если не из метаданных)
+    if [ -f "$XRAY_CONFIG" ]; then
+        if [ -z "$XRAY_PORT" ]; then
+            XRAY_PORT=$(grep -E '"port"' "$XRAY_CONFIG" | head -1 | sed -E 's/.*"port"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/')
+        fi
+        if [ -z "$XRAY_SERVER_NAME" ]; then
+            XRAY_SERVER_NAME=$(sed -n '/serverNames/,/]/p' "$XRAY_CONFIG" | grep -oE '"[^"]+"' | head -1 | tr -d '"')
+        fi
+        [ -z "$XRAY_DEST" ] && XRAY_DEST="${XRAY_SERVER_NAME}:443"
+    fi
+
     echo ""
     log_info "Текущий внешний IP сервера: ${EXTERNAL_IP:-не определен}"
-    log_info "Текущий порт: $WG_PORT"
+    log_info "Текущий порт WireGuard: $WG_PORT"
+    if [ -f "$XRAY_CONFIG" ]; then
+        log_info "Текущий порт Xray: ${XRAY_PORT:-—}"
+        log_info "Текущий SNI Xray: ${XRAY_SERVER_NAME:-—}"
+    fi
     echo ""
-    
+
     # Запрос нового IP
     local new_ip=""
     local ip_valid=false
@@ -1783,7 +1819,59 @@ change_server_ip() {
             log_error "Неверный формат порта (должно быть число от 1 до 65535)"
         fi
     done
-    
+
+    # Запрос нового порта и SNI для Xray (если Xray установлен)
+    local new_xray_port=""
+    local new_xray_sni=""
+    if [ -f "$XRAY_CONFIG" ]; then
+        echo ""
+        log_info "Параметры Xray (порт и SNI)"
+        # Порт Xray
+        local xray_port_valid=false
+        while [ "$xray_port_valid" = false ]; do
+            echo -ne "${BLUE}[?]${NC} Введите порт Xray (VLESS) [по умолчанию: ${XRAY_PORT:-443}]: " >&2
+            read new_xray_port < /dev/tty
+            if [ -z "$new_xray_port" ]; then
+                new_xray_port="${XRAY_PORT:-443}"
+            fi
+            if validate_port "$new_xray_port"; then
+                xray_port_valid=true
+            else
+                log_error "Неверный формат порта (1–65535)"
+            fi
+        done
+        # SNI
+        local sni_options=("microsoft.com" "cloudflare.com" "google.com" "apple.com" "amazon.com" "bing.com" "github.com" "netflix.com" "tiktok.com" "wikipedia.org" "bbc.com" "yahoo.com" "spotify.com" "Ввести вручную")
+        local sni_count=${#sni_options[@]}
+        log_info "Выберите новый SNI для Reality [текущий: ${XRAY_SERVER_NAME:-—}]:"
+        local sni_index=1
+        for sni_option in "${sni_options[@]}"; do
+            echo "  $sni_index) $sni_option" >&2
+            sni_index=$((sni_index + 1))
+        done
+        local sni_choice=""
+        while true; do
+            echo -ne "${BLUE}[?]${NC} Ваш выбор (1-$sni_count) [Enter — оставить текущий]: " >&2
+            read sni_choice < /dev/tty
+            if [ -z "$sni_choice" ]; then
+                new_xray_sni="$XRAY_SERVER_NAME"
+                break
+            fi
+            if [[ "$sni_choice" =~ ^[0-9]+$ ]] && [ "$sni_choice" -ge 1 ] && [ "$sni_choice" -le "$sni_count" ]; then
+                if [ "$sni_choice" = "$sni_count" ]; then
+                    echo -ne "${BLUE}[?]${NC} Введите SNI вручную: " >&2
+                    read new_xray_sni < /dev/tty
+                    [ -z "$new_xray_sni" ] && new_xray_sni="$XRAY_SERVER_NAME"
+                else
+                    new_xray_sni="${sni_options[$((sni_choice - 1))]}"
+                fi
+                break
+            fi
+        done
+        new_xray_sni="${new_xray_sni:-$XRAY_SERVER_NAME}"
+        [ -z "$new_xray_sni" ] && new_xray_sni="microsoft.com"
+    fi
+
     echo ""
     log_info "Поиск клиентских конфигов..."
     
@@ -1855,8 +1943,66 @@ change_server_ip() {
         else
             log_warning "Не найдено поле ListenPort в серверном конфиге"
         fi
+        # Фаервол: закрыть старый порт WG, открыть новый (если порт изменился)
+        if [ -n "$WG_PORT" ] && [ "$new_port" != "$WG_PORT" ]; then
+            log_info "Обновление правил фаервола для WireGuard: старый порт $WG_PORT → новый $new_port"
+            if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+                ufw delete allow "${WG_PORT}/udp" 2>/dev/null || true
+                ufw allow "${new_port}/udp" comment 'WireGuard' 2>/dev/null || true
+            else
+                iptables -D INPUT -p udp --dport "$WG_PORT" -j ACCEPT 2>/dev/null || true
+                iptables -I INPUT -p udp --dport "$new_port" -j ACCEPT 2>/dev/null || true
+            fi
+            log_success "Правила фаервола для WireGuard обновлены"
+        fi
     fi
-    
+
+    # Обновление конфига Xray (порт, SNI, dest) и клиентской ссылки
+    if [ -f "$XRAY_CONFIG" ] && [ -n "$new_xray_port" ]; then
+        log_info "Обновление конфигурации Xray..."
+        local old_xray_port="$XRAY_PORT"
+        # Порт в JSON: "port": 443
+        sed -i -E "s|(\"port\"[[:space:]]*:[[:space:]]*)[0-9]+|\1${new_xray_port}|g" "$XRAY_CONFIG"
+        # serverNames — заменяем только строку со значением (пробелы + "hostname")
+        sed -i -E '/"serverNames"/,/]/ { /^[[:space:]]*"[^"]*"[[:space:]]*$/s/^([[:space:]]*)"[^"]*"/\1"'${new_xray_sni}'"/ }' "$XRAY_CONFIG"
+        # dest в realitySettings (строка после "dest":)
+        sed -i -E "s|(\"dest\"[[:space:]]*:[[:space:]]*\")[^\"]*(\")|\1${new_xray_sni}:443\2|g" "$XRAY_CONFIG"
+        XRAY_PORT="$new_xray_port"
+        XRAY_SERVER_NAME="$new_xray_sni"
+        XRAY_DEST="${new_xray_sni}:443"
+        log_success "Конфиг Xray обновлен: порт $XRAY_PORT, SNI $XRAY_SERVER_NAME"
+        # Регенерация VLESS-ссылки (нужны UUID, PUBLIC_KEY, SHORT_ID из метаданных или конфига)
+        if [ -n "$XRAY_UUID" ] && [ -n "$XRAY_PUBLIC_KEY" ] && [ -n "$XRAY_SHORT_ID" ]; then
+            EXTERNAL_IP="$new_ip"
+            local vless_url="vless://${XRAY_UUID}@${EXTERNAL_IP}:${XRAY_PORT}?security=reality&encryption=none&pbk=${XRAY_PUBLIC_KEY}&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=${XRAY_SERVER_NAME}&sid=${XRAY_SHORT_ID}#${XRAY_SERVER_NAME}"
+            local client_config_file="$CONFIG_DIR/xray/client.txt"
+            echo "$vless_url" > "$client_config_file"
+            chmod 600 "$client_config_file"
+            log_success "Клиентская ссылка обновлена: $client_config_file"
+        else
+            log_warning "Обновите VLESS-ссылку вручную в $CONFIG_DIR/xray/client.txt (новый IP: $new_ip, порт: $XRAY_PORT, SNI: $XRAY_SERVER_NAME)"
+        fi
+        # Фаервол: закрыть старый порт Xray, открыть новый (если порт изменился)
+        if [ -n "$old_xray_port" ] && [ "$new_xray_port" != "$old_xray_port" ]; then
+            log_info "Обновление правил фаервола для Xray: старый порт $old_xray_port → новый $new_xray_port"
+            if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+                ufw delete allow "${old_xray_port}/tcp" 2>/dev/null || true
+                ufw allow "${new_xray_port}/tcp" comment 'Xray VLESS' 2>/dev/null || true
+            else
+                iptables -D INPUT -p tcp --dport "$old_xray_port" -j ACCEPT 2>/dev/null || true
+                iptables -I INPUT -p tcp --dport "$new_xray_port" -j ACCEPT 2>/dev/null || true
+            fi
+            log_success "Правила фаервола для Xray обновлены"
+        elif [ -z "$old_xray_port" ] || [ "$new_xray_port" = "$old_xray_port" ]; then
+            # Порт не менялся — просто убедиться, что правило есть
+            if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+                ufw allow "${XRAY_PORT}/tcp" comment 'Xray VLESS' 2>/dev/null || true
+            else
+                iptables -I INPUT -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null || true
+            fi
+        fi
+    fi
+
     # Обновляем метаданные (создаем файл если его не было)
     EXTERNAL_IP="$new_ip"
     WG_PORT="$new_port"
@@ -1872,13 +2018,14 @@ change_server_ip() {
     log_success "Порт изменен: $WG_PORT"
     log_info "Обновлено клиентских конфигов: $updated_count"
     
-    # Перезапускаем контейнер
+    # Перезапускаем контейнеры
     echo ""
-    log_info "Перезапуск контейнера..."
+    log_info "Перезапуск контейнеров..."
     cd "$INSTALL_DIR"
     docker compose restart 2>/dev/null || {
         log_warning "Не удалось перезапустить через docker compose, пробуем напрямую..."
-        docker restart liberty-wg 2>/dev/null || log_error "Не удалось перезапустить контейнер"
+        docker restart liberty-wg 2>/dev/null || true
+        docker restart xray-core 2>/dev/null || true
     }
     
     sleep 3
@@ -1886,7 +2033,11 @@ change_server_ip() {
     echo ""
     log_success "Изменение IP-адреса и порта завершено"
     log_info "Новый IP-адрес: $EXTERNAL_IP"
-    log_info "Новый порт: $WG_PORT"
+    log_info "Новый порт WireGuard: $WG_PORT"
+    if [ -f "$XRAY_CONFIG" ] && [ -n "$new_xray_port" ]; then
+        log_info "Новый порт Xray: $XRAY_PORT"
+        log_info "Новый SNI Xray: $XRAY_SERVER_NAME"
+    fi
     log_info "Все остальные настройки (ключи, шифрование) остались без изменений"
     echo ""
     
@@ -2010,6 +2161,7 @@ main() {
     
     # Настройка универсальной блокировки торрентов (применяется один раз для всех)
     setup_torrent_blocking
+    open_firewall_wg_port
     open_firewall_xray_port
 
     # Генерация конфигурации WireGuard (если нужен)
