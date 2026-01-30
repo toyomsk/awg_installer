@@ -6,7 +6,7 @@ import qrcode
 import io
 import logging
 from typing import Optional, Tuple, Dict
-from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, DOCKER_COMPOSE_DIR, EXTERNAL_IF
+from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, AWG_CONFIG_DIR, WG_INTERFACE, DOCKER_COMPOSE_DIR, EXTERNAL_IF
 
 logger = logging.getLogger(__name__)
 
@@ -394,6 +394,6 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
 def restart_vpn(docker_compose_dir: str, vpn_config_dir: str = None) -> Tuple[bool, str]:
     """Применить изменения конфигурации VPN через wg-quick down/up."""
     if vpn_config_dir is None:
-        vpn_config_dir = VPN_CONFIG_DIR
+        vpn_config_dir = AWG_CONFIG_DIR
     
     return reload_wg_config(vpn_config_dir)

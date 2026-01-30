@@ -33,7 +33,7 @@ except ValueError:
     raise ValueError("ADMIN_IDS должен содержать числовые ID, разделенные запятыми")
 
 # Пути к конфигурации VPN
-VPN_CONFIG_DIR = os.getenv("VPN_CONFIG_DIR", "/opt/docker/amnezia/awg-config")
+AWG_CONFIG_DIR = os.getenv("AWG_CONFIG_DIR", "/opt/docker/amnezia/awg-config")
 DOCKER_COMPOSE_DIR = os.getenv("DOCKER_COMPOSE_DIR", "/opt/docker/amnezia")
 
 # SQLite: путь к БД клиентов (источник истины по клиентам)
@@ -92,7 +92,7 @@ def _load_vpn_base_params(vpn_config_dir: str) -> Dict[str, any]:
     
     return result
 
-_VPN_BASE_PARAMS = _load_vpn_base_params(VPN_CONFIG_DIR)
+_VPN_BASE_PARAMS = _load_vpn_base_params(AWG_CONFIG_DIR)
 WG_PORT = _VPN_BASE_PARAMS['port']
 VPN_BASE_IP = _VPN_BASE_PARAMS['base_ip']
 VPN_SUBNET = _VPN_BASE_PARAMS['subnet']
@@ -150,7 +150,7 @@ def _load_amnezia_params(vpn_config_dir: str) -> Dict[str, int]:
         'H4': int(os.getenv("AMNEZIA_H4", "478726153"))
     }
 
-_AMNEZIA_PARAMS = _load_amnezia_params(VPN_CONFIG_DIR)
+_AMNEZIA_PARAMS = _load_amnezia_params(AWG_CONFIG_DIR)
 AMNEZIA_JC = _AMNEZIA_PARAMS['Jc']
 AMNEZIA_JMIN = _AMNEZIA_PARAMS['Jmin']
 AMNEZIA_JMAX = _AMNEZIA_PARAMS['Jmax']

@@ -127,8 +127,8 @@ if [ -z "$ADMIN_IDS" ]; then
     exit 1
 fi
 
-# VPN_CONFIG_DIR
-ask_with_default "Введите VPN_CONFIG_DIR" "${VPN_CONFIG_DIR:-/opt/docker/liberty/config/wg}" VPN_CONFIG_DIR
+# AWG_CONFIG_DIR
+ask_with_default "Введите AWG_CONFIG_DIR" "${AWG_CONFIG_DIR:-/opt/docker/liberty/config/wg}" AWG_CONFIG_DIR
 
 # DOCKER_COMPOSE_DIR
 ask_with_default "Введите DOCKER_COMPOSE_DIR" "${DOCKER_COMPOSE_DIR:-/opt/docker/liberty}" DOCKER_COMPOSE_DIR
@@ -171,7 +171,7 @@ BOT_TOKEN=$BOT_TOKEN
 ADMIN_IDS=$ADMIN_IDS
 
 # Путь к директории с конфигурацией WireGuard (Liberty)
-VPN_CONFIG_DIR=$VPN_CONFIG_DIR
+AWG_CONFIG_DIR=$AWG_CONFIG_DIR
 
 # Путь к директории с docker-compose (Liberty)
 DOCKER_COMPOSE_DIR=$DOCKER_COMPOSE_DIR
@@ -206,12 +206,12 @@ info ".env файл создан успешно!"
 
 # 5. Проверка существования директорий
 info "Проверка директорий..."
-if [ ! -d "$VPN_CONFIG_DIR" ]; then
-    warn "Директория $VPN_CONFIG_DIR не существует"
+if [ ! -d "$AWG_CONFIG_DIR" ]; then
+    warn "Директория $AWG_CONFIG_DIR не существует"
     read -p "Создать директорию? (y/N): " create_dir
     if [[ $create_dir =~ ^[Yy]$ ]]; then
-        mkdir -p "$VPN_CONFIG_DIR"
-        info "Директория $VPN_CONFIG_DIR создана"
+        mkdir -p "$AWG_CONFIG_DIR"
+        info "Директория $AWG_CONFIG_DIR создана"
     fi
 fi
 

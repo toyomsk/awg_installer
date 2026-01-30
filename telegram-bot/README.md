@@ -62,7 +62,7 @@ nano .env
 ```env
 BOT_TOKEN=your_bot_token_here
 ADMIN_IDS=123456789
-VPN_CONFIG_DIR=/opt/docker/amnezia/awg-config
+AWG_CONFIG_DIR=/opt/docker/amnezia/awg-config
 DOCKER_COMPOSE_DIR=/opt/docker/amnezia
 WG_PORT=51820
 VPN_SUBNET=10.10.1.0/24
@@ -168,7 +168,7 @@ telegram-bot-awg/
 - При создании клиента VPN сервер автоматически перезапускается
 - При удалении клиента VPN сервер также перезапускается
 - Конфигурации клиентов сохраняются в `DOCKER_COMPOSE_DIR`
-- Серверный конфиг WireGuard находится в `VPN_CONFIG_DIR/wg0.conf`
+- Серверный конфиг WireGuard находится в `AWG_CONFIG_DIR/wg0.conf`
 
 ## Устранение неполадок
 

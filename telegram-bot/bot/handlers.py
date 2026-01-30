@@ -10,7 +10,7 @@ from telegram.constants import ParseMode
 
 from config.settings import (
     is_admin,
-    VPN_CONFIG_DIR,
+    AWG_CONFIG_DIR,
     DOCKER_COMPOSE_DIR,
     WG_PORT,
     DB_PATH,
@@ -130,7 +130,7 @@ async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     success, config_or_error = awg_create_client(
         internal_name,
-        VPN_CONFIG_DIR,
+        AWG_CONFIG_DIR,
         DOCKER_COMPOSE_DIR,
         WG_PORT,
     )
@@ -148,7 +148,7 @@ async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             logger.warning("Xray create_client: %s", vless_or_err)
 
-    restart_success, restart_msg = restart_vpn(DOCKER_COMPOSE_DIR, VPN_CONFIG_DIR)
+    restart_success, restart_msg = restart_vpn(DOCKER_COMPOSE_DIR, AWG_CONFIG_DIR)
 
     status_msg = "✅ Клиент создан успешно\\!\n"
     status_msg += f"🆔 *ID для удаления:* `{escape_markdown_v2(client_id)}`\n"
@@ -233,7 +233,7 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    config_content = awg_get_client_config(name, VPN_CONFIG_DIR)
+    config_content = awg_get_client_config(name, AWG_CONFIG_DIR)
     if not config_content:
         await update.message.reply_text(
             f"❌ Конфиг WG не найден для клиента `{escape_markdown_v2(name)}`",
@@ -315,7 +315,7 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("❌ Недостаточно прав")
         return
 
-    status = get_server_status(DOCKER_COMPOSE_DIR, VPN_CONFIG_DIR)
+    status = get_server_status(DOCKER_COMPOSE_DIR, AWG_CONFIG_DIR)
     await update.message.reply_text(status, parse_mode=ParseMode.MARKDOWN_V2)
 
 
@@ -331,7 +331,7 @@ async def restart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "🔄 Применяю изменения конфигурации VPN\\.\\.\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
-    success, message = restart_vpn(DOCKER_COMPOSE_DIR, VPN_CONFIG_DIR)
+    success, message = restart_vpn(DOCKER_COMPOSE_DIR, AWG_CONFIG_DIR)
     await update.message.reply_text(message)
 
 
@@ -389,11 +389,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.edit_message_text("❌ Клиент не найден")
             return
 
-        awg_delete_client(name, VPN_CONFIG_DIR, DOCKER_COMPOSE_DIR)
+        awg_delete_client(name, AWG_CONFIG_DIR, DOCKER_COMPOSE_DIR)
         if XRAY_ENABLED:
             xray_manager.delete_client(client_id)
         db_delete_client(client_id, DB_PATH)
-        restart_success, restart_msg = restart_vpn(DOCKER_COMPOSE_DIR, VPN_CONFIG_DIR)
+        restart_success, restart_msg = restart_vpn(DOCKER_COMPOSE_DIR, AWG_CONFIG_DIR)
 
         status_msg = f"✅ Клиент удалён\n"
         if restart_success:
