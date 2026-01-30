@@ -1158,6 +1158,54 @@ setup_torrent_blocking() {
     log_info "SSH порт ($ssh_port) и VPN порты исключены из блокировки"
 }
 
+# Удаление правил блокировки торрентов (при удалении установки)
+remove_torrent_blocking() {
+    log_info "Удаление правил блокировки торрентов..."
+    # OUTPUT
+    iptables -D OUTPUT -m state --state NEW -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -m state --state NEW -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -m state --state NEW -p tcp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -m state --state NEW -p udp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -m state --state NEW -p tcp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -m state --state NEW -p udp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -m state --state NEW -p tcp --dport 51413 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -m state --state NEW -p udp --dport 51413 -j DROP 2>/dev/null || true
+    # INPUT
+    iptables -D INPUT -m state --state NEW -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -D INPUT -m state --state NEW -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -D INPUT -m state --state NEW -p tcp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -D INPUT -m state --state NEW -p udp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -D INPUT -m state --state NEW -p tcp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -D INPUT -m state --state NEW -p udp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -D INPUT -m state --state NEW -p tcp --dport 51413 -j DROP 2>/dev/null || true
+    iptables -D INPUT -m state --state NEW -p udp --dport 51413 -j DROP 2>/dev/null || true
+    # FORWARD
+    iptables -D FORWARD -m state --state NEW -p tcp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -D FORWARD -m state --state NEW -p udp --dport 6881:6889 -j DROP 2>/dev/null || true
+    iptables -D FORWARD -m state --state NEW -p tcp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -D FORWARD -m state --state NEW -p udp --dport 4444 -j DROP 2>/dev/null || true
+    iptables -D FORWARD -m state --state NEW -p tcp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -D FORWARD -m state --state NEW -p udp --dport 49001 -j DROP 2>/dev/null || true
+    iptables -D FORWARD -m state --state NEW -p tcp --dport 51413 -j DROP 2>/dev/null || true
+    iptables -D FORWARD -m state --state NEW -p udp --dport 51413 -j DROP 2>/dev/null || true
+    # BitTorrent string rules
+    if iptables -m string --help &>/dev/null 2>&1; then
+        iptables -D OUTPUT -m state --state NEW -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
+        iptables -D OUTPUT -m state --state NEW -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
+        iptables -D OUTPUT -m state --state NEW -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
+        iptables -D OUTPUT -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
+        iptables -D INPUT -m state --state NEW -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
+        iptables -D INPUT -m state --state NEW -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
+        iptables -D INPUT -m state --state NEW -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
+        iptables -D INPUT -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
+        iptables -D FORWARD -m state --state NEW -m string --string "BitTorrent" --algo bm -j DROP 2>/dev/null || true
+        iptables -D FORWARD -m state --state NEW -m string --string "BitTorrent protocol" --algo bm -j DROP 2>/dev/null || true
+        iptables -D FORWARD -m state --state NEW -m string --string "d1:ad2:id20:" --algo bm -j DROP 2>/dev/null || true
+        iptables -D FORWARD -m state --state NEW -m string --string "d1:md11:ut_metadata" --algo bm -j DROP 2>/dev/null || true
+    fi
+    log_success "Правила блокировки торрентов удалены"
+}
+
 # Открытие порта Xray в фаерволе (ufw или iptables)
 open_firewall_xray_port() {
     [ "$XRAY_ENABLED" != "true" ] || [ -z "$XRAY_PORT" ] && return 0
@@ -1205,7 +1253,7 @@ open_firewall_wg_port() {
 create_startup_script() {
     log_step "Создание скрипта запуска контейнера"
     
-    local startup_script="$INSTALL_DIR/start-container.sh"
+    local startup_script="$INSTALL_DIR/start-wg.sh"
     
     cat > "$startup_script" << 'SCRIPT_EOF'
 #!/bin/bash
@@ -1269,9 +1317,9 @@ COMPOSE_EOF
     volumes:
       - /lib/modules:/lib/modules:ro
       - ./config/wg:/opt/amnezia/awg
-      - ./start-container.sh:/start-container.sh:ro
+      - ./start-wg.sh:/start-wg.sh:ro
 
-    command: /start-container.sh
+    command: /start-wg.sh
 
     restart: always
 EOF
@@ -1585,7 +1633,38 @@ uninstall() {
             return 1
         fi
     fi
-    
+
+    # Загружаем метаданные для удаления правил фаервола (до удаления директории)
+    local uninstall_wg_port=""
+    local uninstall_xray_port=""
+    local uninstall_xray_enabled=""
+    if [ -f "$INSTALL_INFO_FILE" ]; then
+        # shellcheck source=/dev/null
+        . "$INSTALL_INFO_FILE" 2>/dev/null || true
+        uninstall_wg_port="$WG_PORT"
+        uninstall_xray_port="$XRAY_PORT"
+        uninstall_xray_enabled="$XRAY_ENABLED"
+    fi
+    # Удаление правил фаервола (порты WG и Xray)
+    log_info "Удаление правил фаервола для портов Liberty..."
+    if [ -n "$uninstall_wg_port" ]; then
+        if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+            ufw delete allow "${uninstall_wg_port}/udp" 2>/dev/null || true
+        else
+            iptables -D INPUT -p udp --dport "$uninstall_wg_port" -j ACCEPT 2>/dev/null || true
+        fi
+        log_info "Правило для WireGuard (порт $uninstall_wg_port) удалено"
+    fi
+    if [ "$uninstall_xray_enabled" = "true" ] && [ -n "$uninstall_xray_port" ]; then
+        if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+            ufw delete allow "${uninstall_xray_port}/tcp" 2>/dev/null || true
+        else
+            iptables -D INPUT -p tcp --dport "$uninstall_xray_port" -j ACCEPT 2>/dev/null || true
+        fi
+        log_info "Правило для Xray (порт $uninstall_xray_port) удалено"
+    fi
+    remove_torrent_blocking
+
     # Остановка и удаление контейнеров
     cd "$INSTALL_DIR" 2>/dev/null && docker compose down 2>/dev/null || true
     
@@ -1948,10 +2027,10 @@ change_server_ip() {
             log_info "Обновление правил фаервола для WireGuard: старый порт $WG_PORT → новый $new_port"
             if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
                 ufw delete allow "${WG_PORT}/udp" 2>/dev/null || true
-                ufw allow "${new_port}/udp" comment 'WireGuard' 2>/dev/null || true
+                ufw status 2>/dev/null | grep -q "${new_port}/udp" || ufw allow "${new_port}/udp" comment 'WireGuard' 2>/dev/null || true
             else
                 iptables -D INPUT -p udp --dport "$WG_PORT" -j ACCEPT 2>/dev/null || true
-                iptables -I INPUT -p udp --dport "$new_port" -j ACCEPT 2>/dev/null || true
+                iptables -C INPUT -p udp --dport "$new_port" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport "$new_port" -j ACCEPT 2>/dev/null || true
             fi
             log_success "Правила фаервола для WireGuard обновлены"
         fi
@@ -1994,11 +2073,11 @@ change_server_ip() {
             fi
             log_success "Правила фаервола для Xray обновлены"
         elif [ -z "$old_xray_port" ] || [ "$new_xray_port" = "$old_xray_port" ]; then
-            # Порт не менялся — просто убедиться, что правило есть
+            # Порт не менялся — добавляем правило только если его ещё нет
             if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-                ufw allow "${XRAY_PORT}/tcp" comment 'Xray VLESS' 2>/dev/null || true
+                ufw status 2>/dev/null | grep -q "${XRAY_PORT}/tcp" || ufw allow "${XRAY_PORT}/tcp" comment 'Xray VLESS' 2>/dev/null || true
             else
-                iptables -I INPUT -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$XRAY_PORT" -j ACCEPT 2>/dev/null || true
             fi
         fi
     fi
