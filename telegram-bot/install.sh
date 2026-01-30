@@ -85,12 +85,12 @@ while IFS= read -r line; do
 done < .env 2>/dev/null || true
 
 # Дефолты из .install_info Liberty (если сервер уже установлен)
-INSTALL_INFO_PATH="/opt/docker/liberty/.install_info"
+INSTALL_INFO_PATH="/opt/liberty/.install_info"
 if [ -f "$INSTALL_INFO_PATH" ]; then
     # shellcheck source=/dev/null
     . "$INSTALL_INFO_PATH" 2>/dev/null || true
-    DOCKER_COMPOSE_DIR="${DOCKER_COMPOSE_DIR:-/opt/docker/liberty}"
-    AWG_CONFIG_DIR="${AWG_CONFIG_DIR:-/opt/docker/liberty/config/wg}"
+    DOCKER_COMPOSE_DIR="${DOCKER_COMPOSE_DIR:-/opt/liberty}"
+    AWG_CONFIG_DIR="${AWG_CONFIG_DIR:-/opt/liberty/config/wg}"
     EXTERNAL_IF="${EXTERNAL_IF:-}"
     WG_INTERFACE="${WG_INTERFACE:-wg0}"
 fi
@@ -139,10 +139,10 @@ if [ -z "$ADMIN_IDS" ]; then
 fi
 
 # AWG_CONFIG_DIR
-ask_with_default "Введите AWG_CONFIG_DIR" "${AWG_CONFIG_DIR:-/opt/docker/liberty/config/wg}" AWG_CONFIG_DIR
+ask_with_default "Введите AWG_CONFIG_DIR" "${AWG_CONFIG_DIR:-/opt/liberty/config/wg}" AWG_CONFIG_DIR
 
 # DOCKER_COMPOSE_DIR
-ask_with_default "Введите DOCKER_COMPOSE_DIR" "${DOCKER_COMPOSE_DIR:-/opt/docker/liberty}" DOCKER_COMPOSE_DIR
+ask_with_default "Введите DOCKER_COMPOSE_DIR" "${DOCKER_COMPOSE_DIR:-/opt/liberty}" DOCKER_COMPOSE_DIR
 
 # DB_PATH (пусто = clients.db в директории бота)
 ask_with_default "Введите DB_PATH (пусто = по умолчанию)" "${DB_PATH:-}" DB_PATH

@@ -18,7 +18,7 @@ sudo ./install.sh
 В интерактивном меню выберите:
 
 1. **Установить сервер (AWG + Xray)** — только VPN-сервер; в конце можно согласиться установить бота.
-2. **Установить только Telegram-бота** — для уже развёрнутой установки Liberty (путь к установке запросится или возьмётся `/opt/docker/liberty`).
+2. **Установить только Telegram-бота** — для уже развёрнутой установки Liberty (путь к установке запросится или возьмётся `/opt/liberty`).
 3. **Установить сервер (AWG + Xray) и Telegram-бота** — полная установка одной цепочкой.
 4. **Выход**
 
@@ -32,7 +32,7 @@ sudo ./install.sh
 
 ## Структура после установки
 
-- Сервер: `/opt/docker/liberty/` (docker-compose, `config/wg/`, `config/xray/`).
-- Бот (если установлен): `/opt/docker/liberty/telegram-bot/` (venv, .env, systemd-сервис `liberty-bot.service`).
+- Сервер: `/opt/liberty/` (docker-compose, `config/wg/`, `config/xray/`).
+- Бот (если установлен): `/opt/liberty/telegram-bot/` (venv, .env, systemd-сервис `vpn-bot.service`).
 
 Подробнее про бота и команды — в [telegram-bot/README.md](telegram-bot/README.md).

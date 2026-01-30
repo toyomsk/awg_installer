@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Переменные
-INSTALL_DIR="/opt/docker/liberty"
+INSTALL_DIR="/opt/liberty"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Директория, из которой вызвали скрипт (для поиска telegram-bot при запуске из клона репозитория)
 INITIAL_CWD="${INITIAL_CWD:-$(pwd)}"
@@ -1556,9 +1556,9 @@ load_install_info() {
     return 0
 }
 
-# Установка Telegram-бота: копируем ./telegram-bot в /opt/telegram-bot и запускаем там install.sh
+# Установка Telegram-бота: копируем ./telegram-bot в $INSTALL_DIR/telegram-bot и запускаем там install.sh
 install_bot() {
-    local BOT_DEST="/opt/telegram-bot"
+    local BOT_DEST="$INSTALL_DIR/telegram-bot"
 
     log_step "Установка Telegram-бота"
 
@@ -1573,6 +1573,7 @@ install_bot() {
     fi
 
     mkdir -p /opt
+    mkdir -p "$(dirname "$BOT_DEST")"
     log_info "Копирую telegram-bot в $BOT_DEST..."
     if command -v rsync &>/dev/null; then
         rsync -a --exclude=venv --exclude=__pycache__ --exclude=.env --exclude=.git \
@@ -1611,16 +1612,16 @@ show_start_menu() {
     case "$choice" in
         1) ;;
         2)
-            if [ -f "/opt/docker/liberty/.install_info" ]; then
-                INSTALL_DIR="/opt/docker/liberty"
+            if [ -f "/opt/liberty/.install_info" ]; then
+                INSTALL_DIR="/opt/liberty"
             else
                 echo ""
                 log_info "Укажите путь к установке Liberty (директория с .install_info и config/)."
                 local path_liberty=""
                 while [ -z "$path_liberty" ] || [ ! -d "$path_liberty" ]; do
-                    echo -ne "${BLUE}[?]${NC} Путь [/opt/docker/liberty]: " >&2
+                    echo -ne "${BLUE}[?]${NC} Путь [/opt/liberty]: " >&2
                     read path_liberty < /dev/tty
-                    [ -z "$path_liberty" ] && path_liberty="/opt/docker/liberty"
+                    [ -z "$path_liberty" ] && path_liberty="/opt/liberty"
                     [ ! -d "$path_liberty" ] && log_error "Директория не найдена: $path_liberty"
                 done
                 INSTALL_DIR="$path_liberty"
@@ -1770,8 +1771,8 @@ uninstall() {
         log_success "Директория удалена"
     fi
 
-    # Остановка и удаление Telegram-бота (/opt/telegram-bot)
-    local BOT_DEST="/opt/telegram-bot"
+    # Остановка и удаление Telegram-бота ($INSTALL_DIR/telegram-bot)
+    local BOT_DEST="$INSTALL_DIR/telegram-bot"
     if [ -f /etc/systemd/system/vpn-bot.service ]; then
         log_info "Остановка и отключение сервиса vpn-bot..."
         systemctl stop vpn-bot.service 2>/dev/null || true
