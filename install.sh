@@ -14,12 +14,26 @@ INSTALL_DIR="/opt/docker/amnezia-wg"
 CONFIG_DIR="$INSTALL_DIR/awg-config"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 WG_CONFIG="$CONFIG_DIR/wg0.conf"
+INSTALL_INFO_FILE="$INSTALL_DIR/.install_info"
 
 # Переменные конфигурации (будут заполнены интерактивно)
 WG_NETWORK=""
 WG_PORT=""
 WG_SERVER_IP=""
 EXTERNAL_IF=""
+EXTERNAL_IP=""
+
+# Переменные для obfuscation (будут сохранены в метаданных)
+OBFS_Jc=""
+OBFS_Jmin=""
+OBFS_Jmax=""
+OBFS_S1=""
+OBFS_S2=""
+OBFS_H1=""
+OBFS_H2=""
+OBFS_H3=""
+OBFS_H4=""
+PSK=""
 
 # Переменные для нового пользователя
 NEW_USER=""
@@ -304,7 +318,7 @@ setup_user_and_ssh() {
     
     # Перезапуск SSH службы
     log_info "Перезапуск SSH службы..."
-    systemctl restart sshd || systemctl restart ssh || {
+    systemctl restart ssh || {
         log_error "Не удалось перезапустить SSH службу. Проверьте конфигурацию вручную!"
         log_error "Резервная копия: ${sshd_config}.backup.*"
         exit 1
@@ -575,7 +589,7 @@ generate_config() {
     SERVER_PRIVATE_KEY=$(wg genkey)
     SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
 
-    # Генерация PSK
+    # Генерация PSK (сохраняем для метаданных)
     log_info "Генерация PSK..."
     PSK=$(wg genpsk)
 
@@ -649,12 +663,6 @@ H1 = $OBFS_H1
 H2 = $OBFS_H2
 H3 = $OBFS_H3
 H4 = $OBFS_H4
-
-#PostUp = iptables -A INPUT -p udp --dport $WG_PORT -m conntrack --ctstate NEW -j ACCEPT --wait 10 --wait-interval 50; iptables -A FORWARD -i $EXTERNAL_IF -o wg0 -j ACCEPT --wait 10 --wait-interval 50; iptables -A FORWARD -i wg0 -j ACCEPT --wait 10 --wait-interval 50; iptables -t nat -A POSTROUTING -o $EXTERNAL_IF -j MASQUERADE --wait 10 --wait-interval 50
-#; ip6tables -A FORWARD -i wg0 -j ACCEPT --wait 10 --wait-interval 50; ip6tables -t nat -A POSTROUTING -o $EXTERNAL_IF -j MASQUERADE --wait 10 --wait-interval 50
-
-#PostDown = iptables -D INPUT -p udp --dport $WG_PORT -m conntrack --ctstate NEW -j ACCEPT --wait 10 --wait-interval 50; iptables -D FORWARD -i $EXTERNAL_IF -o wg0 -j ACCEPT --wait 10 --wait-interval 50; iptables -D FORWARD -i wg0 -j ACCEPT --wait 10 --wait-interval 50; iptables -t nat -D POSTROUTING -o $EXTERNAL_IF -j MASQUERADE --wait 10 --wait-interval 50
-#; ip6tables -D FORWARD -i wg0 -j ACCEPT --wait 10 --wait-interval 50; ip6tables -t nat -D POSTROUTING -o $EXTERNAL_IF -j MASQUERADE --wait 10 --wait-interval 50
 EOF
     
     # Устанавливаем правильные права доступа на конфиг
@@ -664,6 +672,9 @@ EOF
     log_success "Конфигурация WireGuard создана"
     log_info "Публичный ключ сервера: $SERVER_PUBLIC_KEY"
     log_info "Внешний IP сервера: $EXTERNAL_IP"
+    
+    # Сохраняем метаданные после генерации конфига (без дополнительного шага)
+    save_install_info "true"
 }
 
 # Создание скрипта запуска контейнера
@@ -842,6 +853,489 @@ check_status() {
     fi
 }
 
+# Проверка существующей установки
+check_existing_installation() {
+    local installed=false
+    
+    # Проверка директории установки
+    if [ -d "$INSTALL_DIR" ]; then
+        installed=true
+    fi
+    
+    # Проверка docker-compose.yml
+    if [ -f "$COMPOSE_FILE" ]; then
+        installed=true
+    fi
+    
+    # Проверка конфига wg0.conf
+    if [ -f "$WG_CONFIG" ]; then
+        installed=true
+    fi
+    
+    # Проверка запущенного контейнера
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^amnezia-awg$"; then
+        installed=true
+    fi
+    
+    if [ "$installed" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Сохранение метаданных установки
+save_install_info() {
+    local silent="${1:-false}"
+    
+    if [ "$silent" != "true" ]; then
+        log_step "Сохранение метаданных установки"
+    fi
+    
+    # Загружаем приватный ключ из конфига если он еще не загружен
+    if [ -z "$SERVER_PRIVATE_KEY" ] && [ -f "$WG_CONFIG" ]; then
+        SERVER_PRIVATE_KEY=$(grep "PrivateKey" "$WG_CONFIG" | awk '{print $3}')
+        SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
+    fi
+    
+    cat > "$INSTALL_INFO_FILE" << EOF
+# Метаданные установки amnezia-wg
+# Создано: $(date)
+
+EXTERNAL_IP="$EXTERNAL_IP"
+WG_NETWORK="$WG_NETWORK"
+WG_PORT="$WG_PORT"
+EXTERNAL_IF="$EXTERNAL_IF"
+NEW_USER="$NEW_USER"
+OBFS_Jc="$OBFS_Jc"
+OBFS_Jmin="$OBFS_Jmin"
+OBFS_Jmax="$OBFS_Jmax"
+OBFS_S1="$OBFS_S1"
+OBFS_S2="$OBFS_S2"
+OBFS_H1="$OBFS_H1"
+OBFS_H2="$OBFS_H2"
+OBFS_H3="$OBFS_H3"
+OBFS_H4="$OBFS_H4"
+SERVER_PRIVATE_KEY="$SERVER_PRIVATE_KEY"
+SERVER_PUBLIC_KEY="$SERVER_PUBLIC_KEY"
+PSK="$PSK"
+EOF
+    
+    chmod 600 "$INSTALL_INFO_FILE"
+    if [ "$silent" != "true" ]; then
+        log_success "Метаданные сохранены в $INSTALL_INFO_FILE"
+    fi
+}
+
+# Загрузка метаданных установки
+load_install_info() {
+    if [ ! -f "$INSTALL_INFO_FILE" ]; then
+        log_error "Файл метаданных не найден: $INSTALL_INFO_FILE"
+        return 1
+    fi
+    
+    # Загружаем переменные из файла
+    . "$INSTALL_INFO_FILE"
+    
+    log_success "Метаданные загружены"
+    return 0
+}
+
+# Интерактивное меню выбора действия
+show_installation_menu() {
+    echo ""
+    echo "=========================================="
+    echo "  Обнаружена существующая установка"
+    echo "=========================================="
+    echo ""
+    log_info "Выберите действие:"
+    echo ""
+    echo "  1) Удаление всего установленного"
+    echo "  2) Полная переустановка с нуля"
+    echo "  3) Изменение IP-адреса и порта сервера"
+    echo "  4) Выход"
+    echo ""
+    
+    local choice=""
+    while [[ ! "$choice" =~ ^[1-4]$ ]]; do
+        echo -ne "${BLUE}[?]${NC} Ваш выбор (1-4): " >&2
+        read choice < /dev/tty
+    done
+    
+    case "$choice" in
+        1)
+            uninstall
+            exit 0
+            ;;
+        2)
+            reinstall
+            ;;
+        3)
+            change_server_ip
+            exit 0
+            ;;
+        4)
+            log_info "Выход из скрипта"
+            exit 0
+            ;;
+    esac
+}
+
+# Удаление установки
+uninstall() {
+    local skip_confirm="${1:-false}"
+    
+    if [ "$skip_confirm" != "true" ]; then
+        log_step "Удаление установки"
+        
+        echo ""
+        log_warning "ВНИМАНИЕ: Это действие удалит все установленные компоненты!"
+        log_info "Будут удалены:"
+        log_info "  - Docker контейнер amnezia-awg"
+        log_info "  - Директория $INSTALL_DIR со всем содержимым"
+        log_info "  - Все конфигурации и клиентские конфиги"
+        echo ""
+        
+        local confirm=""
+        while [[ ! "$confirm" =~ ^[yYnN]$ ]]; do
+            echo -ne "${RED}[?]${NC} Вы уверены? (y/n): " >&2
+            read confirm < /dev/tty
+        done
+        
+        if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+            log_info "Удаление отменено"
+            return 1
+        fi
+    fi
+    
+    # Остановка и удаление контейнера
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^amnezia-awg$"; then
+        log_info "Остановка контейнера amnezia-awg..."
+        cd "$INSTALL_DIR" 2>/dev/null && docker compose down 2>/dev/null || true
+        docker stop amnezia-awg 2>/dev/null || true
+        docker rm amnezia-awg 2>/dev/null || true
+        log_success "Контейнер удален"
+    fi
+    
+    # Удаление директории установки
+    if [ -d "$INSTALL_DIR" ]; then
+        log_info "Удаление директории $INSTALL_DIR..."
+        rm -rf "$INSTALL_DIR"
+        log_success "Директория удалена"
+    fi
+    
+    log_success "Удаление завершено"
+    echo ""
+    log_info "Примечание: Созданный пользователь и его настройки не были удалены"
+    return 0
+}
+
+# Переустановка
+reinstall() {
+    log_step "Переустановка"
+    
+    echo ""
+    log_warning "Будет выполнена полная переустановка с нуля"
+    log_info "Все текущие данные будут удалены"
+    echo ""
+    
+    local confirm=""
+    while [[ ! "$confirm" =~ ^[yYnN]$ ]]; do
+        echo -ne "${BLUE}[?]${NC} Продолжить? (y/n): " >&2
+        read confirm < /dev/tty
+    done
+    
+    if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+        log_info "Переустановка отменена"
+        show_installation_menu
+        return 0
+    fi
+    
+    # Удаляем существующую установку (без подтверждения, так как уже подтвердили)
+    if ! uninstall "true"; then
+        log_error "Не удалось удалить существующую установку"
+        exit 1
+    fi
+    
+    # Сбрасываем счетчик шагов для новой установки
+    STEP=0
+    
+    # Продолжаем стандартную установку
+    log_info "Начинаем новую установку..."
+    echo ""
+}
+
+# Изменение IP-адреса и порта сервера
+change_server_ip() {
+    log_step "Изменение IP-адреса и порта сервера"
+    
+    # Пытаемся загрузить метаданные или извлекаем из конфигов
+    local metadata_loaded=false
+    if load_install_info 2>/dev/null; then
+        metadata_loaded=true
+        log_info "Метаданные загружены из файла"
+    else
+        log_warning "Файл метаданных не найден, извлекаем информацию из конфигов..."
+        
+        # Извлекаем порт из серверного конфига
+        if [ -f "$WG_CONFIG" ]; then
+            WG_PORT=$(grep -E "^[[:space:]]*ListenPort[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            if [ -z "$WG_PORT" ]; then
+                log_error "Не удалось определить порт из конфига $WG_CONFIG"
+                exit 1
+            fi
+            log_info "Порт извлечен из конфига: $WG_PORT"
+        else
+            log_error "Не найден серверный конфиг: $WG_CONFIG"
+            exit 1
+        fi
+        
+        # Пытаемся определить внешний IP из клиентских конфигов или автоматически
+        EXTERNAL_IP=""
+        if [ -d "$INSTALL_DIR" ]; then
+            # Ищем первый клиентский конфиг с Endpoint
+            local first_client_config=$(find "$INSTALL_DIR" -name "*.conf" -type f ! -name "wg0.conf" 2>/dev/null | head -1)
+            if [ -n "$first_client_config" ] && [ -f "$first_client_config" ]; then
+                local endpoint_line=$(grep -E "^[[:space:]]*Endpoint[[:space:]]*=" "$first_client_config" | head -1)
+                if [ -n "$endpoint_line" ]; then
+                    EXTERNAL_IP=$(echo "$endpoint_line" | sed -E 's/^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*//' | cut -d':' -f1)
+                    log_info "IP извлечен из клиентского конфига: $EXTERNAL_IP"
+                fi
+            fi
+        fi
+        
+        # Если не удалось определить IP, пытаемся получить из интерфейса или внешнего сервиса
+        if [ -z "$EXTERNAL_IP" ]; then
+            log_info "Попытка определить внешний IP автоматически..."
+            # Определяем интерфейс по умолчанию
+            local default_if=$(get_default_interface)
+            if [ -n "$default_if" ]; then
+                EXTERNAL_IP=$(ip addr show "$default_if" 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1 | head -1)
+            fi
+            
+            # Fallback на внешний сервис
+            if [ -z "$EXTERNAL_IP" ]; then
+                EXTERNAL_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || echo "")
+            fi
+            
+            if [ -z "$EXTERNAL_IP" ]; then
+                log_warning "Не удалось определить текущий внешний IP автоматически. Потребуется ввод вручную."
+                EXTERNAL_IP=""
+            else
+                log_info "Внешний IP определен автоматически: $EXTERNAL_IP"
+            fi
+        fi
+        
+        # Загружаем остальные параметры из конфига если возможно
+        if [ -f "$WG_CONFIG" ]; then
+            WG_NETWORK=""
+            EXTERNAL_IF=""
+            # Пытаемся извлечь другие параметры если нужно
+            OBFS_Jc=$(grep -E "^[[:space:]]*Jc[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_Jmin=$(grep -E "^[[:space:]]*Jmin[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_Jmax=$(grep -E "^[[:space:]]*Jmax[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_S1=$(grep -E "^[[:space:]]*S1[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_S2=$(grep -E "^[[:space:]]*S2[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_H1=$(grep -E "^[[:space:]]*H1[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_H2=$(grep -E "^[[:space:]]*H2[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_H3=$(grep -E "^[[:space:]]*H3[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            OBFS_H4=$(grep -E "^[[:space:]]*H4[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            SERVER_PRIVATE_KEY=$(grep -E "^[[:space:]]*PrivateKey[[:space:]]*=" "$WG_CONFIG" | awk '{print $3}' | head -1)
+            if [ -n "$SERVER_PRIVATE_KEY" ]; then
+                SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
+            fi
+        fi
+    fi
+    
+    echo ""
+    log_info "Текущий внешний IP сервера: ${EXTERNAL_IP:-не определен}"
+    log_info "Текущий порт: $WG_PORT"
+    echo ""
+    
+    # Запрос нового IP
+    local new_ip=""
+    local ip_valid=false
+    
+    while [ "$ip_valid" = false ]; do
+        if [ -z "$EXTERNAL_IP" ]; then
+            echo -ne "${BLUE}[?]${NC} Введите новый внешний IP-адрес сервера: " >&2
+        else
+            echo -ne "${BLUE}[?]${NC} Введите новый внешний IP-адрес сервера [по умолчанию: $EXTERNAL_IP]: " >&2
+        fi
+        read new_ip < /dev/tty
+        
+        # Использовать текущий IP если ввод пустой и IP определен
+        if [ -z "$new_ip" ] && [ -n "$EXTERNAL_IP" ]; then
+            new_ip="$EXTERNAL_IP"
+        fi
+        
+        # Если IP не был определен и ввод пустой, требуем ввод
+        if [ -z "$new_ip" ]; then
+            log_error "IP-адрес обязателен для ввода"
+            continue
+        fi
+        
+        # Простая валидация IP
+        if [[ "$new_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            local valid_octets=true
+            IFS='.' read -r -a octets <<< "$new_ip"
+            for octet in "${octets[@]}"; do
+                if ! [[ "$octet" =~ ^[0-9]+$ ]] || [ "$octet" -lt 0 ] || [ "$octet" -gt 255 ]; then
+                    valid_octets=false
+                    break
+                fi
+            done
+            
+            if [ "$valid_octets" = true ]; then
+                ip_valid=true
+            else
+                log_error "Неверный формат IP-адреса"
+            fi
+        else
+            log_error "Неверный формат IP-адреса (ожидается формат: x.x.x.x)"
+        fi
+    done
+    
+    echo ""
+    
+    # Запрос нового порта
+    local new_port=""
+    local port_valid=false
+    
+    while [ "$port_valid" = false ]; do
+        echo -ne "${BLUE}[?]${NC} Введите новый порт WireGuard [по умолчанию: $WG_PORT]: " >&2
+        read new_port < /dev/tty
+        
+        # Использовать текущий порт если ввод пустой
+        if [ -z "$new_port" ]; then
+            new_port="$WG_PORT"
+        fi
+        
+        # Валидация порта
+        if validate_port "$new_port"; then
+            port_valid=true
+        else
+            log_error "Неверный формат порта (должно быть число от 1 до 65535)"
+        fi
+    done
+    
+    echo ""
+    log_info "Поиск клиентских конфигов..."
+    
+    # Поиск всех клиентских конфигов (все .conf файлы кроме wg0.conf)
+    local client_configs=()
+    local updated_count=0
+    
+    # Ищем в INSTALL_DIR и поддиректориях
+    if [ -d "$INSTALL_DIR" ]; then
+        while IFS= read -r config_file; do
+            if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+                local basename_file=$(basename "$config_file")
+                if [ "$basename_file" != "wg0.conf" ]; then
+                    client_configs+=("$config_file")
+                fi
+            fi
+        done < <(find "$INSTALL_DIR" -name "*.conf" -type f 2>/dev/null)
+    fi
+    
+    if [ ${#client_configs[@]} -eq 0 ]; then
+        log_warning "Клиентские конфиги не найдены"
+    else
+        log_info "Найдено клиентских конфигов: ${#client_configs[@]}"
+        echo ""
+        
+        # Создаем резервные копии и обновляем конфиги
+        for config_file in "${client_configs[@]}"; do
+            local backup_file="${config_file}.backup.$(date +%Y%m%d_%H%M%S)"
+            
+            # Создаем резервную копию
+            cp "$config_file" "$backup_file"
+            chmod 600 "$backup_file"
+            
+            # Обновляем Endpoint в конфиге
+            # Ищем строку вида "Endpoint = IP:PORT" (с любыми пробелами)
+            if grep -qE "^[[:space:]]*Endpoint[[:space:]]*=" "$config_file"; then
+                # Извлекаем текущий Endpoint для информации
+                local current_endpoint=$(grep -E "^[[:space:]]*Endpoint[[:space:]]*=" "$config_file" | sed -E 's/^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*//')
+                
+                # Заменяем IP и порт в строке Endpoint на новые значения
+                # Паттерн: Endpoint = IP:PORT или Endpoint=IP:PORT
+                # Заменяем IP адрес и порт
+                sed -i -E "s|^([[:space:]]*Endpoint[[:space:]]*=[[:space:]]*)([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}):([0-9]+)|\1${new_ip}:${new_port}|g" "$config_file"
+                
+                # Проверяем что замена прошла успешно
+                if grep -qE "^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*${new_ip}:${new_port}" "$config_file"; then
+                    log_success "Обновлен: $(basename "$config_file") (было: $current_endpoint, стало: ${new_ip}:${new_port})"
+                    updated_count=$((updated_count + 1))
+                else
+                    log_warning "Не удалось обновить Endpoint в $(basename "$config_file")"
+                fi
+            else
+                log_warning "В файле $(basename "$config_file") не найдено поле Endpoint"
+            fi
+        done
+    fi
+    
+    # Обновляем серверный конфиг wg0.conf
+    if [ -f "$WG_CONFIG" ]; then
+        log_info "Обновление серверного конфига wg0.conf..."
+        local backup_config="${WG_CONFIG}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$WG_CONFIG" "$backup_config"
+        chmod 600 "$backup_config"
+        
+        # Обновляем ListenPort в серверном конфиге
+        if grep -qE "^[[:space:]]*ListenPort[[:space:]]*=" "$WG_CONFIG"; then
+            sed -i -E "s|^([[:space:]]*ListenPort[[:space:]]*=[[:space:]]*)[0-9]+|\1${new_port}|g" "$WG_CONFIG"
+            log_success "Порт в серверном конфиге обновлен: $new_port"
+        else
+            log_warning "Не найдено поле ListenPort в серверном конфиге"
+        fi
+    fi
+    
+    # Обновляем метаданные (создаем файл если его не было)
+    EXTERNAL_IP="$new_ip"
+    WG_PORT="$new_port"
+    save_install_info
+    
+    # Если метаданные не были загружены из файла, создаем файл с текущими значениями
+    if [ "$metadata_loaded" = false ]; then
+        log_info "Создан файл метаданных для будущих операций"
+    fi
+    
+    echo ""
+    log_success "IP-адрес изменен: $EXTERNAL_IP"
+    log_success "Порт изменен: $WG_PORT"
+    log_info "Обновлено клиентских конфигов: $updated_count"
+    
+    # Перезапускаем контейнер
+    echo ""
+    log_info "Перезапуск контейнера..."
+    cd "$INSTALL_DIR"
+    docker compose restart 2>/dev/null || {
+        log_warning "Не удалось перезапустить через docker compose, пробуем напрямую..."
+        docker restart amnezia-awg 2>/dev/null || log_error "Не удалось перезапустить контейнер"
+    }
+    
+    sleep 3
+    
+    echo ""
+    log_success "Изменение IP-адреса и порта завершено"
+    log_info "Новый IP-адрес: $EXTERNAL_IP"
+    log_info "Новый порт: $WG_PORT"
+    log_info "Все остальные настройки (ключи, шифрование) остались без изменений"
+    echo ""
+    
+    if [ $updated_count -gt 0 ]; then
+        log_info "Обновленные клиентские конфиги:"
+        for config_file in "${client_configs[@]}"; do
+            if grep -qE "Endpoint[[:space:]]*=[[:space:]]*${new_ip}:${new_port}" "$config_file"; then
+                echo "  - $config_file"
+            fi
+        done
+        echo ""
+    fi
+}
+
 # Вывод финальной информации
 print_summary() {
     log_step "Итоговая информация"
@@ -884,6 +1378,14 @@ main() {
     echo ""
 
     check_root
+    
+    # Проверка существующей установки
+    if check_existing_installation; then
+        log_info "Обнаружена существующая установка"
+        show_installation_menu
+        # Если мы здесь после reinstall, продолжаем установку
+    fi
+    
     check_os
     check_utils
     
@@ -911,6 +1413,8 @@ main() {
     sleep 5
 
     if check_status; then
+        # Сохраняем метаданные после успешной установки
+        save_install_info
         print_summary
         exit 0
     else
