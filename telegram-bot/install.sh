@@ -135,7 +135,7 @@ if [ -z "$ADMIN_IDS" ]; then
     exit 1
 fi
 
-ask_with_default "Введите путь до сервера Liberty" "${DOCKER_COMPOSE_DIR:-/opt/liberty}" DOCKER_COMPOSE_DIR
+DOCKER_COMPOSE_DIR="/opt/liberty"
 AWG_CONFIG_DIR="${DOCKER_COMPOSE_DIR}/config/wg"
 DB_PATH="${INSTALL_DIR}/clients.db"
 
