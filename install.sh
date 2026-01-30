@@ -10,10 +10,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Переменные
-INSTALL_DIR="/opt/docker/amnezia-wg"
-CONFIG_DIR="$INSTALL_DIR/awg-config"
+INSTALL_DIR="/opt/docker/liberty"
+CONFIG_DIR="$INSTALL_DIR/config"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
-WG_CONFIG="$CONFIG_DIR/wg0.conf"
+WG_CONFIG="$CONFIG_DIR/wg/wg0.conf"
 INSTALL_INFO_FILE="$INSTALL_DIR/.install_info"
 
 # Переменные конфигурации (будут заполнены интерактивно)
@@ -45,7 +45,7 @@ XRAY_DEST=""
 XRAY_XVER=0
 XRAY_PRIVATE_KEY=""
 XRAY_PUBLIC_KEY=""
-XRAY_CONFIG="$CONFIG_DIR/xray-config.json"
+XRAY_CONFIG="$CONFIG_DIR/xray/config.json"
 
 # Переменные для нового пользователя
 NEW_USER=""
@@ -540,7 +540,8 @@ get_config_params() {
         echo "  Можно выбрать популярный сайт для маскировки трафика"
         echo ""
         local sni_choice=""
-        local sni_options=("www.microsoft.com" "www.cloudflare.com" "www.google.com" "www.apple.com" "www.amazon.com" "Ввести вручную")
+        local sni_options=("microsoft.com" "cloudflare.com" "google.com" "apple.com" "amazon.com" "bing.com" "github.com" "netflix.com" "tiktok.com" "wikipedia.org" "bbc.com" "yahoo.com" "spotify.com" "Ввести вручную")
+        local sni_count=${#sni_options[@]}
         local sni_index=1
         for sni_option in "${sni_options[@]}"; do
             echo "  $sni_index) $sni_option"
@@ -548,19 +549,22 @@ get_config_params() {
         done
         echo ""
         
-        while [[ ! "$sni_choice" =~ ^[1-6]$ ]]; do
-            echo -ne "${BLUE}[?]${NC} Ваш выбор (1-6) [по умолчанию: 1]: " >&2
+        while true; do
+            echo -ne "${BLUE}[?]${NC} Ваш выбор (1-$sni_count) [по умолчанию: 1]: " >&2
             read sni_choice < /dev/tty
             if [ -z "$sni_choice" ]; then
                 sni_choice="1"
             fi
+            if [[ "$sni_choice" =~ ^[0-9]+$ ]] && [ "$sni_choice" -ge 1 ] && [ "$sni_choice" -le "$sni_count" ]; then
+                break
+            fi
         done
         
-        if [ "$sni_choice" = "6" ]; then
+        if [ "$sni_choice" = "$sni_count" ]; then
             echo -ne "${BLUE}[?]${NC} Введите SNI вручную: " >&2
             read XRAY_SERVER_NAME < /dev/tty
             if [ -z "$XRAY_SERVER_NAME" ]; then
-                XRAY_SERVER_NAME="www.microsoft.com"
+                XRAY_SERVER_NAME="microsoft.com"
                 log_warning "SNI не введен, используется по умолчанию: $XRAY_SERVER_NAME"
             fi
         else
@@ -701,6 +705,7 @@ tune_system() {
   net.core.wmem_max = 67108864 \
   net.core.netdev_max_backlog = 250000 \
   net.core.somaxconn = 4096 \
+  net.core.default_qdisc = fq \
   \
   net.ipv4.tcp_syncookies = 1 \
   net.ipv4.tcp_tw_reuse = 1 \
@@ -715,8 +720,8 @@ tune_system() {
   net.ipv4.tcp_rmem = 4096 87380 67108864 \
   net.ipv4.tcp_wmem = 4096 65536 67108864 \
   net.ipv4.tcp_mtu_probing = 1 \
-  net.ipv4.tcp_congestion_control = hybla \
-  # for low-latency network, use cubic instead \
+  net.ipv4.tcp_congestion_control = bbr \
+  # for low-latency network: cubic; for high-latency: hybla \
   # net.ipv4.tcp_congestion_control = cubic \
   " | sed -e 's/^\s\+//g' | tee -a /etc/sysctl.conf > /dev/null
 
@@ -779,7 +784,7 @@ install_docker() {
 create_directories() {
     log_step "Создание структуры директорий"
     mkdir -p "$INSTALL_DIR"
-    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$CONFIG_DIR/wg" "$CONFIG_DIR/xray"
     log_success "Директории созданы: $INSTALL_DIR"
 }
 
@@ -1065,7 +1070,7 @@ generate_xray_client_config() {
     
     local vless_url="vless://${XRAY_UUID}@${EXTERNAL_IP}:${XRAY_PORT}?security=reality&encryption=none&pbk=${XRAY_PUBLIC_KEY}&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=${XRAY_SERVER_NAME}&sid=${XRAY_SHORT_ID}#${XRAY_SERVER_NAME}"
     
-    local client_config_file="$CONFIG_DIR/xray-client.txt"
+    local client_config_file="$CONFIG_DIR/xray/client.txt"
     echo "$vless_url" > "$client_config_file"
     chmod 600 "$client_config_file"
     chown root:root "$client_config_file"
@@ -1229,9 +1234,9 @@ COMPOSE_EOF
     # Добавляем сервис WireGuard если он нужен
     if [ -n "$WG_NETWORK" ]; then
         cat >> "$COMPOSE_FILE" << EOF
-  amnezia-awg:
+  liberty-wg:
     image: amneziavpn/amnezia-wg:latest
-    container_name: amnezia-awg
+    container_name: liberty-wg
 
     network_mode: host
 
@@ -1242,7 +1247,7 @@ COMPOSE_EOF
 
     volumes:
       - /lib/modules:/lib/modules:ro
-      - ./awg-config:/opt/amnezia/awg
+      - ./config/wg:/opt/amnezia/awg
       - ./start-container.sh:/start-container.sh:ro
 
     command: /start-container.sh
@@ -1261,7 +1266,7 @@ EOF
     network_mode: host
 
     volumes:
-      - ./awg-config/xray-config.json:/etc/xray/config.json:ro
+      - ./config/xray/config.json:/etc/xray/config.json:ro
 
     command: ["/usr/bin/xray", "-config", "/etc/xray/config.json"]
 
@@ -1296,22 +1301,22 @@ check_status() {
     # Проверка статуса контейнера WireGuard (если установлен)
     if [ -n "$WG_NETWORK" ]; then
         log_info "Проверка статуса контейнера WireGuard..."
-        if docker ps | grep -q amnezia-awg; then
-            log_success "Контейнер amnezia-awg запущен"
+        if docker ps | grep -q liberty-wg; then
+            log_success "Контейнер liberty-wg запущен"
             checks_passed=$((checks_passed + 1))
         else
-            log_error "Контейнер amnezia-awg не найден в списке запущенных"
+            log_error "Контейнер liberty-wg не найден в списке запущенных"
             checks_failed=$((checks_failed + 1))
         fi
 
         # Проверка логов WireGuard
         log_info "Проверка логов контейнера WireGuard..."
-        if docker logs amnezia-awg --tail 20 2>&1 | grep -q "wg0.conf\|WireGuard\|wg-quick"; then
+        if docker logs liberty-wg --tail 20 2>&1 | grep -q "wg0.conf\|WireGuard\|wg-quick"; then
             log_success "Логи контейнера WireGuard выглядят нормально"
             checks_passed=$((checks_passed + 1))
         else
             log_error "Проблемы в логах контейнера WireGuard"
-            docker logs amnezia-awg --tail 20
+            docker logs liberty-wg --tail 20
             checks_failed=$((checks_failed + 1))
         fi
 
@@ -1415,7 +1420,7 @@ check_existing_installation() {
     fi
     
     # Проверка запущенных контейнеров
-    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qE "^(amnezia-awg|xray-core)$"; then
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qE "^(liberty-wg|xray-core)$"; then
         installed=true
     fi
     
@@ -1441,7 +1446,7 @@ save_install_info() {
     fi
     
     cat > "$INSTALL_INFO_FILE" << EOF
-# Метаданные установки VPN сервера
+# Метаданные установки Liberty
 # Создано: $(date)
 
 EXTERNAL_IP="$EXTERNAL_IP"
@@ -1542,7 +1547,7 @@ uninstall() {
         echo ""
         log_warning "ВНИМАНИЕ: Это действие удалит все установленные компоненты!"
         log_info "Будут удалены:"
-        log_info "  - Docker контейнер amnezia-awg (если установлен)"
+        log_info "  - Docker контейнер liberty-wg (если установлен)"
         log_info "  - Docker контейнер xray-core (если установлен)"
         log_info "  - Директория $INSTALL_DIR со всем содержимым"
         log_info "  - Все конфигурации и клиентские конфиги"
@@ -1563,11 +1568,11 @@ uninstall() {
     # Остановка и удаление контейнеров
     cd "$INSTALL_DIR" 2>/dev/null && docker compose down 2>/dev/null || true
     
-    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^amnezia-awg$"; then
-        log_info "Остановка контейнера amnezia-awg..."
-        docker stop amnezia-awg 2>/dev/null || true
-        docker rm amnezia-awg 2>/dev/null || true
-        log_success "Контейнер amnezia-awg удален"
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^liberty-wg$"; then
+        log_info "Остановка контейнера liberty-wg..."
+        docker stop liberty-wg 2>/dev/null || true
+        docker rm liberty-wg 2>/dev/null || true
+        log_success "Контейнер liberty-wg удален"
     fi
     
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^xray-core$"; then
@@ -1873,7 +1878,7 @@ change_server_ip() {
     cd "$INSTALL_DIR"
     docker compose restart 2>/dev/null || {
         log_warning "Не удалось перезапустить через docker compose, пробуем напрямую..."
-        docker restart amnezia-awg 2>/dev/null || log_error "Не удалось перезапустить контейнер"
+        docker restart liberty-wg 2>/dev/null || log_error "Не удалось перезапустить контейнер"
     }
     
     sleep 3
@@ -1936,7 +1941,7 @@ print_summary() {
 
     if [ -n "$WG_NETWORK" ]; then
         echo "WireGuard:"
-        echo "  Для просмотра логов: docker logs amnezia-awg"
+        echo "  Для просмотра логов: docker logs liberty-wg"
     fi
     
     if [ "$XRAY_ENABLED" = "true" ]; then
@@ -1963,7 +1968,7 @@ print_summary() {
 main() {
     echo ""
     echo "=========================================="
-    echo "  Установка VPN сервера"
+    echo "  Liberty"
     echo "=========================================="
     echo ""
 
