@@ -589,6 +589,7 @@ get_config_params() {
     fi
     log_info "  Внешний интерфейс: $EXTERNAL_IF"
     echo ""
+    log_info "XRAY_ENABLED в конце get_config_params: XRAY_ENABLED=$XRAY_ENABLED"
 }
 
 # Проверка прав доступа
@@ -868,7 +869,9 @@ EOF
     log_info "Внешний IP сервера: $EXTERNAL_IP"
     
     # Сохраняем метаданные после генерации конфига (без дополнительного шага)
+    log_info "XRAY_ENABLED перед save_install_info в generate_config: XRAY_ENABLED=$XRAY_ENABLED"
     save_install_info "true"
+    log_info "XRAY_ENABLED после save_install_info в generate_config: XRAY_ENABLED=$XRAY_ENABLED"
 }
 
 # Генерация параметров Xray
@@ -1980,6 +1983,8 @@ main() {
 
     # Запрос параметров конфигурации перед установкой
     get_config_params
+    
+    log_info "XRAY_ENABLED сразу после get_config_params: XRAY_ENABLED=$XRAY_ENABLED"
 
     install_docker
     create_directories
