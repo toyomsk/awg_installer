@@ -8,6 +8,13 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
+# Состояния интерактивного ввода (context.user_data["state"])
+STATE_ADD_CLIENT_NAME = "add_client_name"
+STATE_GET_CONFIG_ARG = "get_config_arg"
+STATE_DELETE_CLIENT_ID = "delete_client_id"
+
+CANCEL_WORDS = ("отмена", "cancel")
+
 from config.settings import (
     is_admin,
     AWG_CONFIG_DIR,
@@ -71,13 +78,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     welcome_text = """🎛 *VPN Manager Bot*
 
-Доступные команды:
-/add\\_client `\\<имя\\>` \\- Создать клиента \\(AWG \\+ Xray при наличии\\)
+Доступные команды \\(интерактивный ввод, отмена: /cancel\\):
+/add\\_client \\- Создать клиента \\(далее ввод имени\\)
 /list\\_clients \\- Список клиентов \\(ID и имя\\)
-/get\\_config `\\<ID или имя\\>` \\- Получить конфиг
-/delete\\_client `\\<ID\\>` \\- Удалить клиента \\(по ID из списка\\)
+/get\\_config \\- Получить конфиг \\(далее ID или имя\\)
+/delete\\_client \\- Удалить клиента \\(далее ID из списка\\)
 /status \\- Статус сервера
-/restart \\- Перезапуск VPN
+/restart \\- Перезапуск VPN-сервера
+/cancel \\- Выход из режима ввода
 /help \\- Эта справка"""
 
     await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN_V2)
@@ -88,22 +96,17 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await start_handler(update, context)
 
 
-async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Добавление клиента: БД + AWG + Xray (по client_id)."""
-    user_id = update.effective_user.id
-
-    if not is_admin(user_id):
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Выход из интерактивного режима."""
+    if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Недостаточно прав")
         return
+    context.user_data.pop("state", None)
+    await update.message.reply_text("✅ Режим отменён.")
 
-    if not context.args:
-        await update.message.reply_text(
-            "❌ Укажите имя клиента: `/add\\_client имя`",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        return
 
-    display_name_arg = context.args[0]
+async def _do_add_client(update: Update, context: ContextTypes.DEFAULT_TYPE, display_name_arg: str) -> None:
+    """Общая логика добавления клиента по имени (вызов из add_client или message_handler)."""
     if not re.match(r"^[a-zA-Z0-9_-]+$", display_name_arg):
         await update.message.reply_text(
             "❌ Имя может содержать только буквы, цифры, _ и -"
@@ -202,22 +205,20 @@ async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"❌ Ошибка отправки конфига: {e}")
 
 
-async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Получение конфига по ID или отображаемому имени."""
+async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Добавление клиента: входим в режим ввода имени."""
     user_id = update.effective_user.id
-
     if not is_admin(user_id):
         await update.message.reply_text("❌ Недостаточно прав")
         return
+    context.user_data["state"] = STATE_ADD_CLIENT_NAME
+    await update.message.reply_text(
+        "📝 Введите имя клиента (латиница, цифры, _ и -). Для отмены: /cancel"
+    )
 
-    if not context.args:
-        await update.message.reply_text(
-            "❌ Укажите ID или имя: `/get\\_config \\<ID или имя\\>`",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        return
 
-    arg = context.args[0]
+async def _do_get_config(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -> None:
+    """Общая логика получения конфига по ID или имени."""
     name = db_get_name_by_id(arg, DB_PATH)
     client_id = arg if name else None
     if not name:
@@ -282,6 +283,18 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"❌ Ошибка отправки конфига: {e}")
 
 
+async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Получение конфига: входим в режим ввода ID или имени."""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Недостаточно прав")
+        return
+    context.user_data["state"] = STATE_GET_CONFIG_ARG
+    await update.message.reply_text(
+        "📝 Введите ID или имя клиента. Для отмены: /cancel"
+    )
+
+
 async def list_clients_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Список клиентов из БД: ID и отображаемое имя."""
     user_id = update.effective_user.id
@@ -335,22 +348,8 @@ async def restart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(message)
 
 
-async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Удаление клиента по ID."""
-    user_id = update.effective_user.id
-
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Недостаточно прав")
-        return
-
-    if not context.args:
-        await update.message.reply_text(
-            "❌ Укажите ID клиента: `/delete\\_client \\<ID\\>` \\(ID из списка\\)",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        return
-
-    client_id = context.args[0]
+async def _do_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, client_id: str) -> None:
+    """Показать подтверждение удаления по client_id."""
     name = db_get_name_by_id(client_id, DB_PATH)
     if not name:
         await update.message.reply_text(
@@ -358,7 +357,6 @@ async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode=ParseMode.MARKDOWN_V2
         )
         return
-
     display = _display_name(name)
     keyboard = [
         [InlineKeyboardButton("✅ Да, удалить", callback_data=f"delete_yes_{client_id}")],
@@ -370,6 +368,47 @@ async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=reply_markup,
         parse_mode=ParseMode.MARKDOWN_V2,
     )
+
+
+async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаление клиента: входим в режим ввода ID."""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Недостаточно прав")
+        return
+    context.user_data["state"] = STATE_DELETE_CLIENT_ID
+    await update.message.reply_text(
+        "📝 Введите ID клиента (см. /list_clients). Для отмены: /cancel"
+    )
+
+
+async def interactive_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка текстового ввода в интерактивном режиме (имя, ID и т.д.). Отмена: отмена / cancel."""
+    if not update.message or not update.message.text:
+        return
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        return
+    text = update.message.text.strip()
+    if not text:
+        return
+
+    state = context.user_data.get("state")
+    # Текст "отмена" или "cancel" в любом режиме — выход
+    if text.lower() in CANCEL_WORDS:
+        context.user_data.pop("state", None)
+        await update.message.reply_text("✅ Режим отменён.")
+        return
+    if not state:
+        return
+
+    context.user_data.pop("state", None)
+    if state == STATE_ADD_CLIENT_NAME:
+        await _do_add_client(update, context, text)
+    elif state == STATE_GET_CONFIG_ARG:
+        await _do_get_config(update, context, text)
+    elif state == STATE_DELETE_CLIENT_ID:
+        await _do_delete_confirm(update, context, text)
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

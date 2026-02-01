@@ -908,50 +908,9 @@ generate_xray_params() {
     # Первый клиент не создаём — клиенты добавляются только через бота
     XRAY_UUID=""
 
-    # Генерация короткого ID для Reality (8 байт в hex, 16 символов)
-    log_info "Генерация короткого ID для Reality..."
-    XRAY_SHORT_ID=$(openssl rand -hex 8 | head -c 16)
-    if [ -z "$XRAY_SHORT_ID" ]; then
-        # Fallback: используем случайные байты
-        XRAY_SHORT_ID=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n' | head -c 16)
-    fi
-    log_success "Short ID сгенерирован: $XRAY_SHORT_ID"
-    
-    # Генерация x25519 ключей Reality только через контейнер Xray
-    log_info "Генерация x25519 ключей Reality через контейнер Xray..."
-    local key_output
-    key_output=$(docker run --rm --entrypoint "" teddysun/xray:latest /usr/bin/xray x25519 2>&1) || \
-    key_output=$(docker run --rm teddysun/xray:latest /usr/bin/xray x25519 2>&1) || \
-    key_output=$(docker run --rm --entrypoint /usr/bin/xray teddysun/xray:latest x25519 2>&1) || true
-    if echo "$key_output" | grep -qi "Private key:"; then
-        XRAY_PRIVATE_KEY=$(echo "$key_output" | grep -i "Private key:" | sed 's/.*[Pp]rivate [Kk]ey:[[:space:]]*//' | tr -d '\r\n' | head -1)
-        XRAY_PUBLIC_KEY=$(echo "$key_output" | grep -i "Public key:" | sed 's/.*[Pp]ublic [Kk]ey:[[:space:]]*//' | tr -d '\r\n' | head -1)
-    fi
-    if ([ -z "$XRAY_PRIVATE_KEY" ] || [ -z "$XRAY_PUBLIC_KEY" ]) && echo "$key_output" | grep -qi "PrivateKey:"; then
-        [ -z "$XRAY_PRIVATE_KEY" ] && XRAY_PRIVATE_KEY=$(echo "$key_output" | grep -i "PrivateKey:" | sed 's/.*[Pp]rivate[Kk]ey:[[:space:]]*//' | tr -d '\r\n' | head -1)
-        [ -z "$XRAY_PUBLIC_KEY" ] && XRAY_PUBLIC_KEY=$(echo "$key_output" | grep -i "Password:" | sed 's/.*[Pp]assword:[[:space:]]*//' | tr -d '\r\n' | head -1)
-    fi
-    if [ -z "$XRAY_PRIVATE_KEY" ] && echo "$key_output" | grep -q "Private:"; then
-        XRAY_PRIVATE_KEY=$(echo "$key_output" | grep "Private:" | awk '{print $2}' | tr -d '\r\n' | head -1)
-        [ -z "$XRAY_PUBLIC_KEY" ] && XRAY_PUBLIC_KEY=$(echo "$key_output" | grep "Public:" | awk '{print $2}' | tr -d '\r\n' | head -1)
-    fi
-    if [ -z "$XRAY_PRIVATE_KEY" ] || [ -z "$XRAY_PUBLIC_KEY" ]; then
-        log_error "Не удалось сгенерировать x25519 ключи через контейнер Xray (проверьте вывод: xray x25519)"
-        exit 1
-    fi
-    
-    # Xray Reality ожидает base64.RawURLEncoding (документация: xray x25519 по умолчанию)
-    # Преобразуем + → -, / → _ (стандартный base64 от OpenSSL в URL-safe)
-    XRAY_PRIVATE_KEY=$(echo -n "$XRAY_PRIVATE_KEY" | tr '+/' '-_')
-    XRAY_PUBLIC_KEY=$(echo -n "$XRAY_PUBLIC_KEY" | tr '+/' '-_')
-    
-    log_success "Ключи Reality сгенерированы"
-    log_info "  Private Key: ${XRAY_PRIVATE_KEY:0:32}..."
-    log_info "  Public Key: ${XRAY_PUBLIC_KEY:0:32}..."
-    
+    generate_xray_reality_keys || exit 1
     # XVER для Reality (обычно 0)
     XRAY_XVER=0
-    
     echo ""
 }
 
@@ -1020,6 +979,48 @@ EOF
     log_info "  SNI: $XRAY_SERVER_NAME"
     log_info "  Public Key: ${XRAY_PUBLIC_KEY:0:32}..."
     echo ""
+}
+
+# Генерация пары ключей Reality (short_id + x25519). При установке — полная; при смене SNI — только x25519 (short_id не трогаем).
+# Вызов: generate_xray_reality_keys [keys_only]
+generate_xray_reality_keys() {
+    local keys_only="${1:-}"
+    if [ "$keys_only" != "keys_only" ]; then
+        log_info "Генерация short_id для Reality..."
+        XRAY_SHORT_ID=$(openssl rand -hex 8 | head -c 16)
+        if [ -z "$XRAY_SHORT_ID" ]; then
+            XRAY_SHORT_ID=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n' | head -c 16)
+        fi
+    fi
+    log_info "Генерация x25519 ключей через контейнер Xray..."
+    local key_output
+    key_output=$(docker run --rm --entrypoint "" teddysun/xray:latest /usr/bin/xray x25519 2>&1) || \
+    key_output=$(docker run --rm teddysun/xray:latest /usr/bin/xray x25519 2>&1) || \
+    key_output=$(docker run --rm --entrypoint /usr/bin/xray teddysun/xray:latest x25519 2>&1) || true
+    if echo "$key_output" | grep -qi "Private key:"; then
+        XRAY_PRIVATE_KEY=$(echo "$key_output" | grep -i "Private key:" | sed 's/.*[Pp]rivate [Kk]ey:[[:space:]]*//' | tr -d '\r\n' | head -1)
+        XRAY_PUBLIC_KEY=$(echo "$key_output" | grep -i "Public key:" | sed 's/.*[Pp]ublic [Kk]ey:[[:space:]]*//' | tr -d '\r\n' | head -1)
+    fi
+    if ([ -z "$XRAY_PRIVATE_KEY" ] || [ -z "$XRAY_PUBLIC_KEY" ]) && echo "$key_output" | grep -qi "PrivateKey:"; then
+        [ -z "$XRAY_PRIVATE_KEY" ] && XRAY_PRIVATE_KEY=$(echo "$key_output" | grep -i "PrivateKey:" | sed 's/.*[Pp]rivate[Kk]ey:[[:space:]]*//' | tr -d '\r\n' | head -1)
+        [ -z "$XRAY_PUBLIC_KEY" ] && XRAY_PUBLIC_KEY=$(echo "$key_output" | grep -i "Password:" | sed 's/.*[Pp]assword:[[:space:]]*//' | tr -d '\r\n' | head -1)
+    fi
+    if [ -z "$XRAY_PRIVATE_KEY" ] && echo "$key_output" | grep -q "Private:"; then
+        XRAY_PRIVATE_KEY=$(echo "$key_output" | grep "Private:" | awk '{print $2}' | tr -d '\r\n' | head -1)
+        [ -z "$XRAY_PUBLIC_KEY" ] && XRAY_PUBLIC_KEY=$(echo "$key_output" | grep "Public:" | awk '{print $2}' | tr -d '\r\n' | head -1)
+    fi
+    if [ -z "$XRAY_PRIVATE_KEY" ] || [ -z "$XRAY_PUBLIC_KEY" ]; then
+        log_error "Не удалось сгенерировать x25519 ключи через контейнер Xray"
+        return 1
+    fi
+    XRAY_PRIVATE_KEY=$(echo -n "$XRAY_PRIVATE_KEY" | tr '+/' '-_')
+    XRAY_PUBLIC_KEY=$(echo -n "$XRAY_PUBLIC_KEY" | tr '+/' '-_')
+    if [ "$keys_only" = "keys_only" ]; then
+        log_success "Пара ключей Reality пересоздана (public_key, private_key)"
+    else
+        log_success "Ключи Reality сгенерированы (short_id, public_key, private_key)"
+    fi
+    return 0
 }
 
 # Создание скрипта запуска Xray
@@ -2156,20 +2157,30 @@ change_server_ip() {
         fi
     fi
 
-    # Обновление конфига Xray (порт, SNI, dest) и клиентской ссылки
+    # Обновление конфига Xray (порт, SNI, dest) и при смене SNI — пересоздание ключей Reality
     if [ -f "$XRAY_CONFIG" ] && [ -n "$new_xray_port" ]; then
         log_info "Обновление конфигурации Xray..."
         local old_xray_port="$XRAY_PORT"
+        local sni_changed=false
+        if [ "$new_xray_sni" != "$XRAY_SERVER_NAME" ]; then
+            sni_changed=true
+            log_info "Смена SNI: пересоздание пары ключей Reality (старые клиентские ссылки перестанут работать)..."
+            generate_xray_reality_keys keys_only || { log_error "Не удалось пересоздать ключи Reality"; exit 1; }
+        fi
         # Порт в JSON: "port": 443
         sed -i -E "s|(\"port\"[[:space:]]*:[[:space:]]*)[0-9]+|\1${new_xray_port}|g" "$XRAY_CONFIG"
         # serverNames — заменяем только строку со значением (пробелы + "hostname")
         sed -i -E '/"serverNames"/,/]/ { /^[[:space:]]*"[^"]*"[[:space:]]*$/s/^([[:space:]]*)"[^"]*"/\1"'${new_xray_sni}'"/ }' "$XRAY_CONFIG"
         # dest в realitySettings (строка после "dest":)
         sed -i -E "s|(\"dest\"[[:space:]]*:[[:space:]]*\")[^\"]*(\")|\1${new_xray_sni}:443\2|g" "$XRAY_CONFIG"
+        if [ "$sni_changed" = true ]; then
+            sed -i -E "s|(\"privateKey\"[[:space:]]*:[[:space:]]*\")[^\"]*|\1${XRAY_PRIVATE_KEY}|g" "$XRAY_CONFIG"
+        fi
         XRAY_PORT="$new_xray_port"
         XRAY_SERVER_NAME="$new_xray_sni"
         XRAY_DEST="${new_xray_sni}:443"
         log_success "Конфиг Xray обновлен: порт $XRAY_PORT, SNI $XRAY_SERVER_NAME"
+        [ "$sni_changed" = true ] && log_info "Ключи Reality пересозданы — выдайте пользователям новые ссылки из бота"
         # Фаервол: закрыть старый порт Xray, открыть новый (если порт изменился)
         if [ -n "$old_xray_port" ] && [ "$new_xray_port" != "$old_xray_port" ]; then
             log_info "Обновление правил фаервола для Xray: старый порт $old_xray_port → новый $new_xray_port"
@@ -2226,7 +2237,11 @@ change_server_ip() {
         log_info "Новый порт Xray: $XRAY_PORT"
         log_info "Новый SNI Xray: $XRAY_SERVER_NAME"
     fi
-    log_info "Все остальные настройки (ключи, шифрование) остались без изменений"
+    if [ "${sni_changed:-false}" = true ]; then
+        log_info "Ключи Reality пересозданы при смене SNI — раздайте новые ссылки из бота"
+    else
+        log_info "Все остальные настройки (ключи, шифрование) остались без изменений"
+    fi
     echo ""
     
     if [ $updated_count -gt 0 ]; then

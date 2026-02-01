@@ -11,7 +11,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 # Настройка логирования до импорта модулей
 logging.basicConfig(
@@ -52,12 +52,14 @@ def main() -> None:
             from bot.handlers import (
                 start_handler,
                 help_handler,
+                cancel_handler,
                 add_client_handler,
                 get_config_handler,
                 list_clients_handler,
                 status_handler,
                 restart_handler,
                 delete_client_handler,
+                interactive_message_handler,
                 button_handler
             )
         except Exception as e:
@@ -75,14 +77,14 @@ def main() -> None:
         # Регистрация обработчиков команд
         application.add_handler(CommandHandler("start", start_handler))
         application.add_handler(CommandHandler("help", help_handler))
+        application.add_handler(CommandHandler("cancel", cancel_handler))
         application.add_handler(CommandHandler("add_client", add_client_handler))
         application.add_handler(CommandHandler("get_config", get_config_handler))
         application.add_handler(CommandHandler("list_clients", list_clients_handler))
         application.add_handler(CommandHandler("status", status_handler))
         application.add_handler(CommandHandler("restart", restart_handler))
         application.add_handler(CommandHandler("delete_client", delete_client_handler))
-        
-        # Обработчик inline кнопок
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, interactive_message_handler))
         application.add_handler(CallbackQueryHandler(button_handler))
         
         # Запуск бота
