@@ -1411,10 +1411,10 @@ check_status() {
         # Проверка интерфейса wg0 и конфигурации WG внутри контейнера (на хосте wg0 нет)
         log_info "Проверка WireGuard в контейнере..."
         if docker exec liberty-wg wg show wg0 &>/dev/null; then
-            log_success "WireGuard конфигурация активна (в контейнере)"
+            log_success "WireGuard конфигурация активна"
             checks_passed=$((checks_passed + 2))
         else
-            log_error "WireGuard конфигурация не активна в контейнере"
+            log_error "WireGuard конфигурация не активна"
             checks_failed=$((checks_failed + 2))
         fi
 
