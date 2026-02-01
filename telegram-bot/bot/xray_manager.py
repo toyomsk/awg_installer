@@ -4,6 +4,7 @@ import os
 import logging
 import subprocess
 import tempfile
+from urllib.parse import quote
 from typing import Tuple, Optional
 
 from bot.utils import get_external_ip
@@ -99,9 +100,10 @@ def _set_clients(data: dict, clients: list) -> None:
     data["inbounds"][0]["settings"]["clients"] = clients
 
 
-def create_client(client_id: str) -> Tuple[bool, str]:
+def create_client(client_id: str, remark: Optional[str] = None) -> Tuple[bool, str]:
     """
     Add Xray client with email=client_id. Generate VLESS uuid, save config, SIGHUP.
+    remark: имя для описания подключения в ссылке (фрагмент #). По умолчанию client_id.
     Returns (success, vless_link_or_error).
     """
     if not all([XRAY_PUBLIC_KEY, XRAY_PORT, XRAY_SERVER_NAME, XRAY_SHORT_ID]):
@@ -144,13 +146,14 @@ def create_client(client_id: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Ошибка записи config.json: {e}"
     _reload_xray()
-    # Build VLESS link
+    # Build VLESS link (fragment = remark for connection name in client apps)
     external_ip = get_external_ip()
+    fragment = quote(remark or client_id, safe="")
     link = (
         f"vless://{vless_uuid}@{external_ip}:{XRAY_PORT}"
         f"?security=reality&encryption=none&pbk={XRAY_PUBLIC_KEY}"
         f"&fp=chrome&type=tcp&flow=xtls-rprx-vision"
-        f"&sni={XRAY_SERVER_NAME}&sid={XRAY_SHORT_ID}#{client_id}"
+        f"&sni={XRAY_SERVER_NAME}&sid={XRAY_SHORT_ID}#{fragment}"
     )
     return True, link
 
@@ -175,8 +178,9 @@ def delete_client(client_id: str) -> Tuple[bool, str]:
     return True, "OK"
 
 
-def get_client_config(client_id: str) -> Optional[str]:
-    """Get VLESS link for client with email==client_id; None if not found or Xray not configured."""
+def get_client_config(client_id: str, remark: Optional[str] = None) -> Optional[str]:
+    """Get VLESS link for client with email==client_id; None if not found or Xray not configured.
+    remark: имя для описания подключения в ссылке (фрагмент #). По умолчанию client_id."""
     if not all([XRAY_PUBLIC_KEY, XRAY_PORT, XRAY_SERVER_NAME, XRAY_SHORT_ID]):
         return None
     path = _config_path()
@@ -192,10 +196,11 @@ def get_client_config(client_id: str) -> Optional[str]:
             if not vless_uuid:
                 return None
             external_ip = get_external_ip()
+            fragment = quote(remark or client_id, safe="")
             return (
                 f"vless://{vless_uuid}@{external_ip}:{XRAY_PORT}"
                 f"?security=reality&encryption=none&pbk={XRAY_PUBLIC_KEY}"
                 f"&fp=chrome&type=tcp&flow=xtls-rprx-vision"
-                f"&sni={XRAY_SERVER_NAME}&sid={XRAY_SHORT_ID}#{client_id}"
+                f"&sni={XRAY_SERVER_NAME}&sid={XRAY_SHORT_ID}#{fragment}"
             )
     return None

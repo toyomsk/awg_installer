@@ -145,7 +145,7 @@ async def _do_add_client(update: Update, context: ContextTypes.DEFAULT_TYPE, dis
 
     vless_link = None
     if XRAY_ENABLED:
-        ok, vless_or_err = xray_manager.create_client(client_id)
+        ok, vless_or_err = xray_manager.create_client(client_id, remark=internal_name)
         if ok:
             vless_link = vless_or_err
         else:
@@ -190,14 +190,14 @@ async def _do_add_client(update: Update, context: ContextTypes.DEFAULT_TYPE, dis
 
         if vless_link:
             await update.message.reply_text(
-                f"🔗 *VLESS \\(Xray\\):*\n`{escape_markdown_v2(vless_link)}`",
+                f"🔗 *VLESS \\(Xray\\):* `{escape_markdown_v2(internal_name)}`\n`{escape_markdown_v2(vless_link)}`",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
             vless_qr = generate_qr_code(vless_link)
             if vless_qr:
                 await update.message.reply_photo(
                     photo=vless_qr,
-                    caption="📱 QR\\-код VLESS",
+                    caption=f"📱 QR\\-код VLESS для `{escape_markdown_v2(internal_name)}`",
                     parse_mode=ParseMode.MARKDOWN_V2,
                 )
     except Exception as e:
@@ -265,17 +265,17 @@ async def _do_get_config(update: Update, context: ContextTypes.DEFAULT_TYPE, arg
         await update.message.reply_text(keenetic_info, parse_mode=ParseMode.MARKDOWN_V2)
 
         if XRAY_ENABLED and client_id:
-            vless_link = xray_manager.get_client_config(client_id)
+            vless_link = xray_manager.get_client_config(client_id, remark=name)
             if vless_link:
                 await update.message.reply_text(
-                    f"🔗 *VLESS:*\n`{escape_markdown_v2(vless_link)}`",
+                    f"🔗 *VLESS:* `{escape_markdown_v2(name)}`\n`{escape_markdown_v2(vless_link)}`",
                     parse_mode=ParseMode.MARKDOWN_V2,
                 )
                 vless_qr = generate_qr_code(vless_link)
                 if vless_qr:
                     await update.message.reply_photo(
                         photo=vless_qr,
-                        caption="📱 QR\\-код VLESS",
+                        caption=f"📱 QR\\-код VLESS для `{escape_markdown_v2(name)}`",
                         parse_mode=ParseMode.MARKDOWN_V2,
                     )
     except Exception as e:
