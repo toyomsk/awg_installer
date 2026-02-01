@@ -84,7 +84,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 /get\\_config \\- Получить конфиг \\(далее ID или имя\\)
 /delete\\_client \\- Удалить клиента \\(далее ID из списка\\)
 /status \\- Статус сервера
-/restart \\- Перезапуск VPN-сервера
+/restart \\- Перезапуск VPN\\-сервера
 /cancel \\- Выход из режима ввода
 /help \\- Эта справка"""
 
