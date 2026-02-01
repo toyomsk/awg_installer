@@ -42,7 +42,7 @@ pip install -r requirements.txt
 
 1. Напишите [@BotFather](https://t.me/BotFather) в Telegram
 2. Отправьте `/newbot`
-3. Введите имя бота (например: My VPN Manager)
+3. Введите имя бота (например: Liberty Bot)
 4. Введите username (например: myvpnmanager_bot)
 5. Скопируйте TOKEN — он понадобится
 

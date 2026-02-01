@@ -76,19 +76,19 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("❌ У вас нет прав доступа к этому боту.")
         return
 
-    welcome_text = """🎛 *VPN Manager Bot*
+    welcome_text = """🎛 <b>Liberty Bot</b>
 
-Доступные команды \\(интерактивный ввод, отмена: /cancel\\):
-/add\\_client \\- Создать клиента \\(далее ввод имени\\)
-/list\\_clients \\- Список клиентов \\(ID и имя\\)
-/get\\_config \\- Получить конфиг \\(далее ID или имя\\)
-/delete\\_client \\- Удалить клиента \\(далее ID из списка\\)
-/status \\- Статус сервера
-/restart \\- Перезапуск VPN\\-сервера
-/cancel \\- Выход из режима ввода
-/help \\- Эта справка"""
+Доступные команды (интерактивный ввод, отмена: /cancel):
+/add_client — Создать клиента (далее ввод имени)
+/list_clients — Список клиентов (ID и имя)
+/get_config — Получить конфиг (далее ID или имя)
+/delete_client — Удалить клиента (далее ID из списка)
+/status — Статус сервера
+/restart — Перезапуск VPN-сервера
+/cancel — Выход из режима ввода
+/help — Эта справка"""
 
-    await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML)
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
